@@ -109,6 +109,16 @@ table in painting order read as mojibake and lose their conjuncts, yet the
 untouched parts of such a line still come back out exactly as they went in,
 so a word can be changed in the middle of one without damaging the rest.
 
+When the page's own font is refused, the replacement is set in the closest
+thing to it available. An embedded font is only a subset of what was printed
+with it, so a face used for a handful of headings has a handful of letters -
+type a new word into one and half of it has no glyph. Carlito and Caladea are
+bundled for that: metric-for-metric clones of Calibri and Cambria, the two
+fonts Word documents are usually set in, so a finished line sits exactly
+where the original would have and reads as the same typeface. Helvetica and
+Times already serve that role for Arial and Times New Roman. Anything else
+falls back to a built-in of the same class.
+
 When it is refused the line is drawn with a built-in PDF font of the same
 class, or with the bundled Noto Sans Bengali for Bengali, and the status bar
 says which substitute was used. Weight and slant changes also take this path,
@@ -151,4 +161,5 @@ the editor and of the exported file land in `outDir`.
 | `src/lib/export.js` | erases and redraws the edited lines, saves the file |
 
 Built with pdf.js (reading and rendering), pdf-lib (writing) and React.
-`public/fonts/NotoSansBengali.ttf` is Noto Sans Bengali, SIL Open Font License.
+The fonts in `public/fonts/` - Noto Sans Bengali, Carlito and Caladea - are
+all under the SIL Open Font License; each licence is alongside them.

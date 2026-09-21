@@ -36,6 +36,39 @@ const WIN_ANSI = /^[\x20-\x7e -ÿŒœŠšŸŽžƒˆ˜–—‘’‚“”„�
  */
 const COMPLEX_SCRIPT = /[ऀ-෿؀-ۿ܀-ݏ฀-๿ក-៿က-႟]/
 
+/**
+ * Stand-ins for the typefaces documents are actually set in.
+ *
+ * An embedded font is a subset of what was printed with it, so a face used
+ * for a handful of headings has a handful of letters - type a new word into
+ * one and there is no glyph for half of it. These are metric-for-metric
+ * clones of the fonts that turn up most: same widths, same shapes, so a line
+ * finished in one sits exactly where the original would have and reads as
+ * the same typeface. The built-in Helvetica and Times already serve that
+ * role for Arial and Times New Roman.
+ */
+const CLONE_FONTS = [
+  {
+    test: /^calibri/i,
+    label: 'Carlito',
+    files: ['Carlito-Regular', 'Carlito-Bold', 'Carlito-Italic', 'Carlito-BoldItalic'],
+  },
+  {
+    test: /^cambria/i,
+    label: 'Caladea',
+    files: ['Caladea-Regular', 'Caladea-Bold', 'Caladea-Italic', 'Caladea-BoldItalic'],
+  },
+]
+
+function cloneFor(run, bold, italic) {
+  const entry = CLONE_FONTS.find((clone) => clone.test.test(run.fontRawName || ''))
+  if (!entry) return null
+  return {
+    label: entry.label,
+    url: `fonts/${entry.files[(bold ? 1 : 0) + (italic ? 2 : 0)]}.ttf`,
+  }
+}
+
 /** Bundled faces for scripts the built-in fonts cannot write. */
 const FALLBACK_FONTS = [
   { test: /[ঀ-৿]/, url: 'fonts/NotoSansBengali.ttf', label: 'Noto Sans Bengali' },
@@ -130,7 +163,21 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     if (writer) chain.push({ native: writer })
   }
 
-  // 2. a bundled face for any script present in the text
+  // 2. a clone of the document's own typeface, for what its subset lacks
+  const clone = cloneFor(run, bold, italic)
+  if (clone) {
+    const data = await fetchFont(clone.url)
+    const fk = data ? parse(data) : null
+    if (fk) {
+      chain.push({
+        fk,
+        label: clone.label,
+        embed: lazy(`file:${clone.url}`, () => pdfDoc.embedFont(data, { subset: false })),
+      })
+    }
+  }
+
+  // 3. a bundled face for any script present in the text
   for (const fb of FALLBACK_FONTS) {
     if (!fb.test.test(text)) continue
     const data = await fetchFont(fb.url)
@@ -149,7 +196,7 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     })
   }
 
-  // 3. a built-in font, which always encodes plain Latin text
+  // 4. a built-in font, which always encodes plain Latin text
   const name = standardNameFor(run, bold, italic)
   chain.push({ embed: lazy(`std:${name}`, () => pdfDoc.embedFont(name)) })
 
