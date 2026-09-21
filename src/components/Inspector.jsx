@@ -1,10 +1,11 @@
 import ImagePanel from './ImagePanel.jsx'
+import { fallbackNameFor } from '../lib/fonts.js'
 
 const SWATCHES = ['#000000', '#374151', '#6b7280', '#b91c1c', '#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#ffffff']
 
 export default function Inspector({
-  run, edit, image, imageEdit, busy, onEdit, onEditImage, onReplaceImage,
-  onResetImage, onReset, onRecogniseRun, onRecogniseImage,
+  run, edit, image, imageEdit, busy, customFonts, onEdit, onEditImage, onReplaceImage,
+  onResetImage, onReset, onRecogniseRun, onRecogniseImage, onAddFont,
 }) {
   if (image) {
     return (
@@ -43,6 +44,7 @@ export default function Inspector({
   // through the font they came from - but only while the line keeps that
   // font, so changing weight or slant would drop them.
   const fragile = !!run.scrambled
+  const standIn = fallbackNameFor(run, bold, italic, customFonts)
 
   const nudge = (ddx, ddy) => onEdit({ dx: (edit?.dx ?? 0) + ddx, dy: (edit?.dy ?? 0) + ddy })
 
@@ -52,6 +54,16 @@ export default function Inspector({
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Selected text</p>
         <p className="mt-1 truncate text-sm font-medium" title={run.text}>{run.text}</p>
         <p className="mt-0.5 truncate text-[11px] text-slate-400" title={run.fontRawName}>{run.fontRawName}</p>
+        <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+          New letters this font has no glyph for are set in{' '}
+          <span className="font-medium text-slate-600">{standIn}</span>.
+        </p>
+        <button
+          onClick={onAddFont}
+          className="mt-1.5 w-full rounded border border-slate-300 px-2 py-1 text-[12px] hover:bg-slate-50"
+        >
+          Use my own font file…
+        </button>
       </div>
 
       {fragile && (

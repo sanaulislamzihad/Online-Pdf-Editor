@@ -137,7 +137,10 @@ async function applyImageEdits(pdfDoc, page, items, warn) {
  * at the same baseline, in the same font, size and colour unless the user
  * changed them.
  */
-export async function exportPdf({ originalBytes, pages, edits, images = [], imageEdits = {}, plate, onProgress }) {
+export async function exportPdf({
+  originalBytes, pages, edits, images = [], imageEdits = {},
+  customFonts = [], plate, onProgress,
+}) {
   const pdfDoc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
     updateMetadata: false,
@@ -218,7 +221,8 @@ export async function exportPdf({ originalBytes, pages, edits, images = [], imag
       const bold = edit.bold ?? run.bold
       const italic = edit.italic ?? run.italic
       const { chain } = await fontChain({
-        pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text, cache: fontCache,
+        pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text,
+        cache: fontCache, customFonts,
       })
       const { segments, unsupported, lost, swapped } = planSegments({
         // a line read back off the page has nothing in common with the

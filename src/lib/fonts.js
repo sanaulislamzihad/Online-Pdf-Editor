@@ -60,6 +60,60 @@ const CLONE_FONTS = [
   },
 ]
 
+/**
+ * A font the reader supplied themselves.
+ *
+ * No bundled set can cover every typeface a PDF might be set in, so a file
+ * can be handed in - straight out of the system's own font folder, usually -
+ * and it is then preferred over any stand-in of ours. Weight and slant are
+ * read from the file name, so dropping in the regular and the bold of a
+ * family lets each line take the right one.
+ */
+export function describeFont(file, bytes) {
+  const dot = file.name.lastIndexOf('.')
+  const filename = dot > 0 ? file.name.slice(0, dot) : file.name
+  const id = `${filename}:${file.size}`
+
+  // the file says what it is; the name it was saved under often does not
+  const fk = parse(bytes)
+  if (!fk) return { id, name: filename, bold: false, italic: false }
+
+  const style = `${fk.subfamilyName || ''}`.toLowerCase()
+  const weight = fk['OS/2']?.usWeightClass ?? 400
+  const slant = fk.post?.italicAngle ?? 0
+  return {
+    id,
+    name: fk.fullName || fk.familyName || filename,
+    family: fk.familyName || filename,
+    bold: style.includes('bold') || weight >= 600,
+    italic: style.includes('italic') || style.includes('oblique') || slant !== 0,
+  }
+}
+
+const plainName = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/**
+ * Choose among the fonts the reader supplied.
+ *
+ * One that names the same family as the run is the real article and beats
+ * any stand-in of ours. One that does not is still better than a built-in,
+ * but only after a clone of the run's actual typeface has had its turn -
+ * supplying Calibri to fix a heading should not put the body's Cambria into
+ * Calibri as well.
+ */
+function pickCustom(fonts, bold, italic, family) {
+  if (!fonts?.length) return null
+  const matching = family
+    ? fonts.filter((f) => plainName(f.family).startsWith(plainName(family)))
+    : fonts
+  if (!matching.length) return null
+  return matching.find((f) => f.bold === bold && f.italic === italic) ||
+    matching.find((f) => f.bold === bold) ||
+    matching[0]
+}
+
+const familyOf = (run) => (run.fontRawName || '').split(/[-,]/)[0]
+
 function cloneFor(run, bold, italic) {
   const entry = CLONE_FONTS.find((clone) => clone.test.test(run.fontRawName || ''))
   if (!entry) return null
@@ -115,6 +169,16 @@ function covers(cand, text, kept) {
   }
 }
 
+/** What a run's new text would be set in if its own font runs out. */
+export function fallbackNameFor(run, bold, italic, customFonts) {
+  const exact = pickCustom(customFonts, bold, italic, familyOf(run))
+  if (exact) return exact.name
+  const clone = cloneFor(run, bold, italic)
+  if (clone) return clone.label
+  return pickCustom(customFonts, bold, italic, null)?.name ||
+    standardNameFor(run, bold, italic)
+}
+
 /** Split text into runs of a single script, keeping whitespace separate. */
 export function scriptRuns(text) {
   const classOf = (ch) => {
@@ -136,7 +200,9 @@ export function scriptRuns(text) {
  * Build the ordered list of fonts available for a run: the document's own
  * face first, then a bundled face for the scripts present, then a built-in.
  */
-export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, italic, text, cache }) {
+export async function fontChain({
+  pdfDoc, pdfLibPage, pdfjsPage, run, bold, italic, text, cache, customFonts,
+}) {
   const chain = []
 
   // embedding is deferred: a candidate only becomes a real font object in the
@@ -163,7 +229,22 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     if (writer) chain.push({ native: writer })
   }
 
-  // 2. a clone of the document's own typeface, for what its subset lacks
+  const addCustom = (font) => {
+    if (!font) return null
+    const fk = parse(font.bytes)
+    if (!fk) return null
+    chain.push({
+      fk,
+      label: font.name,
+      embed: lazy(`custom:${font.id}`, () => pdfDoc.embedFont(font.bytes, { subset: false })),
+    })
+    return font
+  }
+
+  // 2. the reader's own copy of this very typeface, if they supplied one
+  const exact = addCustom(pickCustom(customFonts, bold, italic, familyOf(run)))
+
+  // 3. a clone of the document's own typeface, for what its subset lacks
   const clone = cloneFor(run, bold, italic)
   if (clone) {
     const data = await fetchFont(clone.url)
@@ -177,7 +258,11 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     }
   }
 
-  // 3. a bundled face for any script present in the text
+  // 4. any other font they supplied, still better than a built-in
+  const generic = pickCustom(customFonts, bold, italic, null)
+  if (generic && generic !== exact) addCustom(generic)
+
+  // 5. a bundled face for any script present in the text
   for (const fb of FALLBACK_FONTS) {
     if (!fb.test.test(text)) continue
     const data = await fetchFont(fb.url)
@@ -196,7 +281,7 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     })
   }
 
-  // 4. a built-in font, which always encodes plain Latin text
+  // 6. a built-in font, which always encodes plain Latin text
   const name = standardNameFor(run, bold, italic)
   chain.push({ embed: lazy(`std:${name}`, () => pdfDoc.embedFont(name)) })
 

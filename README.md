@@ -119,6 +119,15 @@ where the original would have and reads as the same typeface. Helvetica and
 Times already serve that role for Arial and Times New Roman. Anything else
 falls back to a built-in of the same class.
 
+If none of those is the right face, hand the editor the font itself with
+"Use my own font file…" - straight out of the system font folder, usually.
+Its weight and slant are read from the file rather than its name, so the
+regular and the bold of a family each go where they belong, and a font is
+only preferred over a bundled clone for the family it actually names:
+supplying Calibri to finish a heading does not put the body's Cambria into
+Calibri as well. The panel names, for whatever line is selected, the face
+its new letters would be set in.
+
 When it is refused the line is drawn with a built-in PDF font of the same
 class, or with the bundled Noto Sans Bengali for Bengali, and the status bar
 says which substitute was used. Weight and slant changes also take this path,

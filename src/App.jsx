@@ -3,6 +3,7 @@ import { loadPdf, extractRuns } from './lib/extract.js'
 import { exportPdf } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
 import { coverRect } from './lib/plateBuild.js'
+import { describeFont } from './lib/fonts.js'
 import { hasChanges } from './lib/edits.js'
 import { currentRect, extractImages, imageChanged } from './lib/images.js'
 import {
@@ -27,12 +28,14 @@ export default function App() {
   const [language, setLanguage] = useState('eng')
   const [ocrPage, setOcrPage] = useState(null)
   const [reading, setReading] = useState(false)
+  const [customFonts, setCustomFonts] = useState([])
   const bytesRef = useRef(null)
   const plateRef = useRef(null)
   const imagePlateRef = useRef(null)
   const historyRef = useRef([])
   const inputRef = useRef(null)
   const replaceInputRef = useRef(null)
+  const fontInputRef = useRef(null)
 
   const runById = useMemo(() => {
     const map = new Map()
@@ -240,6 +243,21 @@ export default function App() {
     setImageEdits(prev.imageEdits)
   }, [])
 
+  async function addFonts(files) {
+    const added = []
+    for (const file of files || []) {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      added.push({ ...describeFont(file, bytes), bytes })
+    }
+    if (!added.length) return
+    setCustomFonts((prev) => {
+      const byId = new Map(prev.map((f) => [f.id, f]))
+      for (const font of added) byId.set(font.id, font)
+      return [...byId.values()]
+    })
+    setStatus(`${added.map((f) => f.name).join(', ')} will be used where the document's own font runs out.`)
+  }
+
   function replaceSelectedImage(file) {
     if (!file || !selectedImageId) return
     file.arrayBuffer().then((buffer) => {
@@ -285,6 +303,7 @@ export default function App() {
         originalBytes: bytesRef.current,
         pages,
         edits: dirty,
+        customFonts,
         images,
         imageEdits,
         plate: plateRef.current,
@@ -321,6 +340,14 @@ export default function App() {
           accept="application/pdf"
           className="hidden"
           onChange={(e) => openFile(e.target.files?.[0])}
+        />
+        <input
+          ref={fontInputRef}
+          type="file"
+          accept=".ttf,.otf,font/ttf,font/otf"
+          multiple
+          className="hidden"
+          onChange={(e) => { addFonts([...(e.target.files || [])]); e.target.value = '' }}
         />
         <input
           ref={replaceInputRef}
@@ -413,6 +440,8 @@ export default function App() {
           image={selectedImage}
           imageEdit={selectedImageId ? imageEdits[selectedImageId] : null}
           busy={reading}
+          customFonts={customFonts}
+          onAddFont={() => fontInputRef.current?.click()}
           onRecogniseRun={recogniseRun}
           onRecogniseImage={recogniseInImage}
           onEdit={(patch) => selectedId && editRun(selectedId, patch)}
