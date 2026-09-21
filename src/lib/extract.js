@@ -39,26 +39,29 @@ export function startPageRender(page, canvas, scale) {
 }
 
 function fontInfoFor(page, fontName) {
-  let raw = fontName || ''
+  let obj = null
   try {
-    if (page.commonObjs.has(fontName)) {
-      const obj = page.commonObjs.get(fontName)
-      raw = obj?.name || obj?.fallbackName || fontName
-    }
+    if (page.commonObjs.has(fontName)) obj = page.commonObjs.get(fontName)
   } catch {
-    /* font object not resolved yet - fall back to the internal id */
+    /* fall back to whatever the name alone tells us */
   }
+  const raw = obj?.name || obj?.fallbackName || fontName || ''
   // strip subset prefixes like "ABCDEF+"
   const clean = raw.replace(/^[A-Z]{6}\+/, '')
   const lower = clean.toLowerCase()
   const bold = /bold|black|heavy|semibold|demi/.test(lower)
   const italic = /italic|oblique/.test(lower)
 
+  // the name is a better signal than the descriptor's serif flag, which
+  // word processors set carelessly
   let family = '"Helvetica Neue", Helvetica, Arial, sans-serif'
-  if (/times|serif|georgia|garamond|book|roman|minion|cambria/.test(lower)) {
-    family = '"Times New Roman", Times, serif'
-  } else if (/courier|mono|consol/.test(lower)) {
+  if (/courier|mono|consol/.test(lower)) {
     family = '"Courier New", Courier, monospace'
+  } else if (/times|serif|georgia|garamond|book|roman|minion|cambria|palatino/.test(lower)) {
+    family = '"Times New Roman", Times, serif'
+  } else if (!/arial|helvetica|calibri|verdana|tahoma|segoe|roboto|lato|open ?sans|futura|gothic/.test(lower)) {
+    if (obj?.isMonospace) family = '"Courier New", Courier, monospace'
+    else if (obj?.isSerifFont) family = '"Times New Roman", Times, serif'
   }
   return { rawName: clean, family, bold, italic }
 }
@@ -69,6 +72,15 @@ function fontInfoFor(page, fontName) {
  * of the original so it can be reproduced or hidden byte-for-byte later.
  */
 export async function extractRuns(page, pageIndex) {
+  // pdf.js only resolves a page's font objects while it walks the drawing
+  // operators, and the real font names, weights and file bytes live there -
+  // without this every run would report its internal id and no typeface.
+  try {
+    await page.getOperatorList()
+  } catch {
+    /* text is still extractable without it, just with less font detail */
+  }
+
   const content = await page.getTextContent({
     includeMarkedContent: false,
     disableCombineTextItems: true,

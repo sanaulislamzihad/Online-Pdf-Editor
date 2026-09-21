@@ -2,6 +2,7 @@ import { PDFDocument, degrees, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { coverRect } from './plateBuild.js'
 import { fontChain, assignFonts } from './fonts.js'
+import { pushNativeText } from './nativeText.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -26,25 +27,31 @@ function drawSegments(page, segments, opts, warn) {
   const cos = Math.cos(opts.angle || 0)
   const sin = Math.sin(opts.angle || 0)
   let cursor = 0
+
   for (const seg of segments) {
-    const o = {
-      ...opts,
-      font: seg.font,
-      x: opts.x + cursor * cos,
-      y: opts.y + cursor * sin,
+    const x = opts.x + cursor * cos
+    const y = opts.y + cursor * sin
+
+    if (seg.native) {
+      if (pushNativeText(page, seg.native, { ...opts, text: seg.text, x, y })) {
+        cursor += seg.native.widthOf(seg.text, opts.size)
+        continue
+      }
     }
-    delete o.angle
+
+    const drawOpts = { ...opts, font: seg.font, x, y }
+    delete drawOpts.angle
     let text = seg.text
     try {
-      page.drawText(text, o)
+      page.drawText(text, drawOpts)
     } catch {
       for (const [re, to] of SMART) text = text.replace(re, to)
       try {
-        page.drawText(text, o)
+        page.drawText(text, drawOpts)
       } catch {
         text = text.replace(/[^ -~¡-ÿ]/g, '')
         try {
-          page.drawText(text, o)
+          page.drawText(text, drawOpts)
           warn('Some characters could not be written with any available font and were dropped.')
         } catch (err) {
           warn(`Could not draw “${seg.text.slice(0, 24)}”: ${err.message}`)
@@ -122,12 +129,17 @@ export async function exportPdf({ originalBytes, pages, edits, plate, onProgress
       if (!text) continue
       const bold = edit.bold ?? run.bold
       const italic = edit.italic ?? run.italic
-      const { chain, notes } = await fontChain({
-        pdfDoc, pdfjsPage, run, bold, italic, text, cache: fontCache,
+      const { chain } = await fontChain({
+        pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text, cache: fontCache,
       })
-      const { segments, unsupported } = assignFonts(text, chain)
-      if (unsupported && notes.length) {
-        warn(`“${run.fontRawName}” has no glyphs for some of the new text; ${notes[0]} was used there.`)
+      const { segments, unsupported, swapped } = assignFonts(text, chain)
+      for (const seg of segments) {
+        if (!seg.native) seg.font = await seg.cand.embed()
+      }
+      if (swapped.length) {
+        warn(`“${run.fontRawName}” cannot write some of the new text, so ${swapped[0]} was used for it.`)
+      } else if (unsupported) {
+        warn(`Some characters in “${text.slice(0, 20)}” have no glyph in any available font.`)
       }
       drawSegments(page, segments, {
         x: run.x + (edit.dx ?? 0),
