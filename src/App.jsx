@@ -3,29 +3,43 @@ import { loadPdf, extractRuns } from './lib/extract.js'
 import { exportPdf } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
 import { hasChanges } from './lib/edits.js'
+import { extractImages, imageChanged } from './lib/images.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
 
 export default function App() {
   const [fileName, setFileName] = useState('')
   const [pages, setPages] = useState([])
+  const [images, setImages] = useState([])
   const [edits, setEdits] = useState({})
+  const [imageEdits, setImageEdits] = useState({})
   const [selectedId, setSelectedId] = useState(null)
+  const [selectedImageId, setSelectedImageId] = useState(null)
   const [zoom, setZoom] = useState(1.3)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [plateReady, setPlateReady] = useState(false)
+  const [imagePlateReady, setImagePlateReady] = useState(false)
   const bytesRef = useRef(null)
   const plateRef = useRef(null)
+  const imagePlateRef = useRef(null)
   const historyRef = useRef([])
   const inputRef = useRef(null)
+  const replaceInputRef = useRef(null)
 
   const runById = useMemo(() => {
     const map = new Map()
     for (const p of pages) for (const r of p.runs) map.set(r.id, r)
     return map
   }, [pages])
+  const imageById = useMemo(() => {
+    const map = new Map()
+    for (const list of images) for (const image of list) map.set(image.id, image)
+    return map
+  }, [images])
+
   const selectedRun = selectedId ? runById.get(selectedId) || null : null
+  const selectedImage = selectedImageId ? imageById.get(selectedImageId) || null : null
 
   const selectedIdRef = useRef(null)
   selectedIdRef.current = selectedId
@@ -45,13 +59,22 @@ export default function App() {
         const runs = await extractRuns(page, i - 1)
         next.push({ index: i - 1, page, runs })
       }
+      const found = await extractImages(buf)
+
       setPages(next)
+      setImages(found)
       setEdits({})
+      setImageEdits({})
       setPlateReady(false)
+      setImagePlateReady(false)
+      imagePlateRef.current = null
       historyRef.current = []
       setSelectedId(null)
+      setSelectedImageId(null)
       setFileName(file.name)
-      setStatus(`${doc.numPages} page(s), ${next.reduce((n, p) => n + p.runs.length, 0)} editable text blocks`)
+      const runCount = next.reduce((n, p) => n + p.runs.length, 0)
+      const imageCount = found.reduce((n, list) => n + list.length, 0)
+      setStatus(`${doc.numPages} page(s), ${runCount} text blocks, ${imageCount} image(s)`)
 
       // build the text-free background plate in the background; edits can
       // start immediately and the patches sharpen once it is ready
@@ -66,22 +89,40 @@ export default function App() {
     }
   }
 
-  const pushHistory = useCallback((prev) => {
-    historyRef.current.push(prev)
+  const snapshot = useCallback((nextEdits, nextImageEdits) => {
+    historyRef.current.push({ edits: nextEdits, imageEdits: nextImageEdits })
     if (historyRef.current.length > 100) historyRef.current.shift()
   }, [])
 
   const editRun = useCallback((id, patch) => {
     setEdits((prev) => {
-      pushHistory(prev)
+      snapshot(prev, imageEdits)
       return { ...prev, [id]: { ...(prev[id] || {}), ...patch } }
     })
-  }, [pushHistory])
+  }, [snapshot, imageEdits])
+
+  // the plate that shows each page without its images is only needed once an
+  // image is actually touched, and it costs a second render of the document
+  const ensureImagePlate = useCallback(() => {
+    if (imagePlateRef.current || !bytesRef.current) return
+    const plate = new PlateStore({ hideText: false, dropImages: true })
+    imagePlateRef.current = plate
+    plate.load(bytesRef.current).then((ok) => setImagePlateReady(ok))
+  }, [])
+
+  const editImage = useCallback((id, patch) => {
+    ensureImagePlate()
+    setImageEdits((prev) => {
+      snapshot(edits, prev)
+      return { ...prev, [id]: { ...(prev[id] || {}), ...patch } }
+    })
+  }, [snapshot, edits, ensureImagePlate])
 
   const isPristine = (edit, run) => !!edit && !hasChanges(edit, run)
 
   const selectRun = useCallback((id) => {
     const prevId = selectedIdRef.current
+    if (id) setSelectedImageId(null)
     if (prevId === id) return
     setEdits((prev) => {
       const next = { ...prev }
@@ -95,26 +136,49 @@ export default function App() {
     setSelectedId(id)
   }, [runById])
 
+  const selectImage = useCallback((id) => {
+    setSelectedImageId(id)
+    if (id) selectRun(null)
+  }, [selectRun])
+
   const undo = useCallback(() => {
     const prev = historyRef.current.pop()
-    if (prev) setEdits(prev)
+    if (!prev) return
+    setEdits(prev.edits)
+    setImageEdits(prev.imageEdits)
   }, [])
+
+  function replaceSelectedImage(file) {
+    if (!file || !selectedImageId) return
+    file.arrayBuffer().then((buffer) => {
+      const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+      editImage(selectedImageId, {
+        replacement: {
+          bytes: new Uint8Array(buffer),
+          type,
+          url: URL.createObjectURL(file),
+          name: file.name,
+        },
+      })
+    })
+  }
 
   useEffect(() => {
     function onKey(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         undo()
+        return
       }
-      if (e.key === 'Delete' && selectedId && document.activeElement?.tagName !== 'INPUT') {
-        const active = document.activeElement
-        if (active && active.isContentEditable) return
-        editRun(selectedId, { deleted: true })
-      }
+      if (e.key !== 'Delete') return
+      const active = document.activeElement
+      if (active && (active.isContentEditable || active.tagName === 'INPUT')) return
+      if (selectedImageId) editImage(selectedImageId, { deleted: true })
+      else if (selectedId) editRun(selectedId, { deleted: true })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, selectedId, editRun])
+  }, [undo, selectedId, selectedImageId, editRun, editImage])
 
   async function download() {
     if (!bytesRef.current) return
@@ -129,6 +193,8 @@ export default function App() {
         originalBytes: bytesRef.current,
         pages,
         edits: dirty,
+        images,
+        imageEdits,
         plate: plateRef.current,
         onProgress: setStatus,
       })
@@ -148,9 +214,9 @@ export default function App() {
     }
   }
 
-  const changedCount = Object.entries(edits).filter(
-    ([id, e]) => !isPristine(e, runById.get(id)),
-  ).length
+  const changedCount =
+    Object.entries(edits).filter(([id, e]) => !isPristine(e, runById.get(id))).length +
+    Object.values(imageEdits).filter(imageChanged).length
 
   return (
     <div className="flex h-full flex-col bg-slate-100 text-slate-800">
@@ -163,6 +229,13 @@ export default function App() {
           accept="application/pdf"
           className="hidden"
           onChange={(e) => openFile(e.target.files?.[0])}
+        />
+        <input
+          ref={replaceInputRef}
+          type="file"
+          accept="image/png,image/jpeg"
+          className="hidden"
+          onChange={(e) => { replaceSelectedImage(e.target.files?.[0]); e.target.value = '' }}
         />
         <button
           onClick={() => inputRef.current?.click()}
@@ -191,7 +264,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <main
           className="flex-1 overflow-auto p-6"
-          onMouseDown={() => selectRun(null)}
+          onMouseDown={() => { selectRun(null); setSelectedImageId(null) }}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); openFile(e.dataTransfer.files?.[0]) }}
         >
@@ -213,8 +286,15 @@ export default function App() {
                   selectedId={selectedId}
                   plate={plateRef.current}
                   plateReady={plateReady}
+                  images={images[p.index] || []}
+                  imageEdits={imageEdits}
+                  selectedImageId={selectedImageId}
+                  imagePlate={imagePlateRef.current}
+                  imagePlateReady={imagePlateReady}
                   onSelect={selectRun}
+                  onSelectImage={selectImage}
                   onEditRun={editRun}
+                  onEditImage={editImage}
                   onColorsSampled={() => setPages((cur) => [...cur])}
                 />
               ))}
@@ -225,21 +305,27 @@ export default function App() {
         <Inspector
           run={selectedRun}
           edit={selectedId ? edits[selectedId] : null}
+          image={selectedImage}
+          imageEdit={selectedImageId ? imageEdits[selectedImageId] : null}
           onEdit={(patch) => selectedId && editRun(selectedId, patch)}
+          onEditImage={(patch) => selectedImageId && editImage(selectedImageId, patch)}
+          onReplaceImage={() => replaceInputRef.current?.click()}
+          onResetImage={() => selectedImageId && setImageEdits((prev) => {
+            snapshot(edits, prev)
+            return { ...prev, [selectedImageId]: {} }
+          })}
           onReset={() => {
             if (!selectedId) return
             setEdits((prev) => {
-              pushHistory(prev)
-              const next = { ...prev }
-              next[selectedId] = {}
-              return next
+              snapshot(prev, imageEdits)
+              return { ...prev, [selectedId]: {} }
             })
           }}
         />
       </div>
 
       <footer className="border-t border-slate-200 bg-white px-4 py-1.5 text-xs text-slate-500">
-        {busy ? '⏳ ' : ''}{status || 'Click any text on the page to edit it in place.'}
+        {busy ? '⏳ ' : ''}{status || 'Click any text to edit it, or any image to move, resize or replace it.'}
       </footer>
     </div>
   )

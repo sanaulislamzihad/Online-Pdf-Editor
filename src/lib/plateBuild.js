@@ -6,7 +6,8 @@ import {
   PDFRawStream,
   decodePDFRawStream,
 } from 'pdf-lib'
-import { findShowOps, hideShowOps } from './contentStream.js'
+import { findShowOps, findXObjectOps, hideShowOps, removeRanges } from './contentStream.js'
+import { imageStreamIn } from './images.js'
 
 /**
  * The "plate" is the same document with every glyph switched to invisible
@@ -18,7 +19,7 @@ import { findShowOps, hideShowOps } from './contentStream.js'
  * flat cover colour. No operator has to be matched to a specific line, so it
  * works on any PDF regardless of how its text is chopped up into operators.
  */
-export async function buildPlateBytes(originalBytes) {
+export async function buildPlateBytes(originalBytes, { hideText = true, dropImages = false } = {}) {
   const doc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
     updateMetadata: false,
@@ -28,16 +29,32 @@ export async function buildPlateBytes(originalBytes) {
   const ctx = doc.context
   const visited = new Set()
 
-  const blankStream = (stream) => {
+  const blankStream = (stream, resources) => {
     let bytes
     try {
       bytes = decodePDFRawStream(stream).decode()
     } catch {
       return
     }
-    const ops = findShowOps(bytes)
-    if (!ops.length) return
-    stream.contents = hideShowOps(bytes, ops)
+    let changed = false
+
+    if (dropImages) {
+      const drawn = findXObjectOps(bytes).filter((op) => imageStreamIn(ctx, resources, op.name))
+      if (drawn.length) {
+        bytes = removeRanges(bytes, drawn)
+        changed = true
+      }
+    }
+    if (hideText) {
+      const ops = findShowOps(bytes)
+      if (ops.length) {
+        bytes = hideShowOps(bytes, ops)
+        changed = true
+      }
+    }
+    if (!changed) return
+
+    stream.contents = bytes
     stream.dict.delete(PDFName.of('Filter'))
     stream.dict.delete(PDFName.of('DecodeParms'))
   }
@@ -63,30 +80,37 @@ export async function buildPlateBytes(originalBytes) {
       visited.add(stream)
       const subtype = stream.dict.lookup(PDFName.of('Subtype'))
       if (String(subtype) !== '/Form') continue
-      blankStream(stream)
-      walkResources(stream.dict.lookup(PDFName.of('Resources'), PDFDict), depth + 1)
+      const nested = stream.dict.lookup(PDFName.of('Resources'), PDFDict)
+      blankStream(stream, nested)
+      walkResources(nested, depth + 1)
     }
   }
 
   for (const page of doc.getPages()) {
+    let resources = null
+    try {
+      resources = page.node.Resources()
+    } catch {
+      resources = null
+    }
     const contents = page.node.Contents()
     if (contents instanceof PDFArray) {
       for (let i = 0; i < contents.size(); i += 1) {
         try {
-          blankStream(ctx.lookup(contents.get(i), PDFRawStream))
+          blankStream(ctx.lookup(contents.get(i), PDFRawStream), resources)
         } catch {
           /* leave undecodable parts alone */
         }
       }
     } else if (contents) {
       try {
-        blankStream(contents instanceof PDFRawStream ? contents : ctx.lookup(contents, PDFRawStream))
+        blankStream(contents instanceof PDFRawStream ? contents : ctx.lookup(contents, PDFRawStream), resources)
       } catch {
         /* ignore */
       }
     }
     try {
-      walkResources(page.node.Resources(), 0)
+      walkResources(resources, 0)
     } catch {
       /* ignore */
     }

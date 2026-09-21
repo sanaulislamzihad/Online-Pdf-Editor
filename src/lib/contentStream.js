@@ -194,6 +194,89 @@ export function findShowOps(bytes) {
   return ops
 }
 
+
+/** Multiply two PDF matrices: the result of applying `m` then `n`. */
+function multiply(m, n) {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ]
+}
+
+/**
+ * Every XObject the page paints, with the matrix in force when it does.
+ *
+ * An image is drawn by mapping the unit square through the current transform,
+ * so that matrix is the image's position and size on the page. Unlike text,
+ * a Do operator leaves no trace in the graphics state, which is what makes it
+ * safe to cut one out of the stream and draw it somewhere else instead.
+ */
+export function findXObjectOps(bytes) {
+  const tokens = tokenize(bytes)
+  const ops = []
+  const stack = []
+  let ctm = [1, 0, 0, 1, 0, 0]
+  let operands = []
+  let operandStart = -1
+
+  for (const tok of tokens) {
+    if (tok.type !== 'op') {
+      if (operandStart < 0) operandStart = tok.start
+      operands.push(tok)
+      continue
+    }
+
+    const op = tok.value
+    if (op === 'q') {
+      stack.push(ctm)
+    } else if (op === 'Q') {
+      if (stack.length) ctm = stack.pop()
+    } else if (op === 'cm' && operands.length >= 6) {
+      const m = operands.slice(-6).map((o) => o.value)
+      if (m.every((v) => typeof v === 'number')) ctm = multiply(m, ctm)
+    } else if (op === 'Do') {
+      const name = operands.length ? operands[operands.length - 1] : null
+      if (name && name.type === 'name') {
+        ops.push({
+          name: name.value,
+          ctm,
+          start: operandStart < 0 ? tok.start : operandStart,
+          end: tok.end,
+          index: ops.length,
+        })
+      }
+    }
+
+    operands = []
+    operandStart = -1
+  }
+
+  return ops
+}
+
+/** Cut byte ranges out of a stream, leaving everything else byte for byte. */
+export function removeRanges(bytes, ranges) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start)
+  const chunks = []
+  let cursor = 0
+  for (const range of sorted) {
+    if (range.start < cursor) continue
+    chunks.push(bytes.subarray(cursor, range.start))
+    cursor = range.end
+  }
+  chunks.push(bytes.subarray(cursor))
+
+  const total = chunks.reduce((n, c) => n + c.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) { out.set(c, offset); offset += c.length }
+  return out
+}
+
 const enc = new TextEncoder()
 
 /**

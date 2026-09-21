@@ -1,8 +1,22 @@
 import { textRewritten } from '../lib/edits.js'
+import ImagePanel from './ImagePanel.jsx'
 
 const SWATCHES = ['#000000', '#374151', '#6b7280', '#b91c1c', '#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#ffffff']
 
-export default function Inspector({ run, edit, onEdit, onReset }) {
+export default function Inspector({
+  run, edit, image, imageEdit, onEdit, onEditImage, onReplaceImage, onResetImage, onReset,
+}) {
+  if (image) {
+    return (
+      <ImagePanel
+        image={image}
+        edit={imageEdit}
+        onEdit={onEditImage}
+        onReplace={onReplaceImage}
+        onReset={onResetImage}
+      />
+    )
+  }
   if (!run) {
     return (
       <aside className="w-64 shrink-0 border-l border-slate-200 bg-white p-4 text-sm text-slate-500">
@@ -11,6 +25,7 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
           <li>• Click a line of text to edit it.</li>
           <li>• Type to replace, <kbd className="rounded bg-slate-100 px-1">Del</kbd> to remove.</li>
           <li>• Size, colour and style are on this panel.</li>
+          <li>• Click an image to move, resize or replace it.</li>
           <li>• <kbd className="rounded bg-slate-100 px-1">Ctrl</kbd>+<kbd className="rounded bg-slate-100 px-1">Z</kbd> undoes.</li>
         </ul>
       </aside>

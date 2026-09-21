@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { startPageRender, sampleColors, runToScreenBox } from '../lib/extract.js'
 import { coverRect } from '../lib/plateBuild.js'
 import { hasChanges } from '../lib/edits.js'
+import ImageLayer from './ImageLayer.jsx'
 
 export default function PageCanvas({
   pageData,
@@ -10,8 +11,15 @@ export default function PageCanvas({
   selectedId,
   plate,
   plateReady,
+  images,
+  imageEdits,
+  selectedImageId,
+  imagePlate,
+  imagePlateReady,
   onSelect,
+  onSelectImage,
   onEditRun,
+  onEditImage,
   onColorsSampled,
 }) {
   const canvasRef = useRef(null)
@@ -46,6 +54,21 @@ export default function PageCanvas({
       <canvas ref={canvasRef} className="block" />
       {viewport && (
         <div className="absolute inset-0">
+          {/* images sit under the text layer, as they do on the page */}
+          {images.map((image) => (
+            <ImageLayer
+              key={image.id}
+              image={image}
+              viewport={viewport}
+              edit={imageEdits[image.id]}
+              selected={selectedImageId === image.id}
+              plate={imagePlate}
+              plateReady={imagePlateReady}
+              pageCanvasRef={canvasRef}
+              onSelect={onSelectImage}
+              onEdit={onEditImage}
+            />
+          ))}
           {pageData.runs.map((run) => (
             <RunLayer
               key={run.id}

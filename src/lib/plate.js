@@ -6,7 +6,8 @@ const MAX_CACHED_PAGES = 4
 
 /** Lazily renders and caches plate pages, and hands out slices of them. */
 export class PlateStore {
-  constructor() {
+  constructor(options = {}) {
+    this.options = options
     this.doc = null
     this.failed = false
     this.cache = new Map()
@@ -21,7 +22,7 @@ export class PlateStore {
 
   async #load(originalBytes) {
     try {
-      const bytes = await buildPlateBytes(originalBytes)
+      const bytes = await buildPlateBytes(originalBytes, this.options)
       if (!bytes) { this.failed = true; return false }
       this.doc = await loadPdf(bytes)
       return true
@@ -81,6 +82,16 @@ export class PlateStore {
     destCanvas.height = Math.max(1, Math.round(cssH * dpr))
     destCanvas.style.width = `${cssW}px`
     destCanvas.style.height = `${cssH}px`
+    const ctx = destCanvas.getContext('2d')
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(entry.canvas, sx, sy, sw, sh, 0, 0, destCanvas.width, destCanvas.height)
+    return true
+  }
+
+  /** Draw a slice at an exact pixel size, into a canvas the caller sized. */
+  drawSlice(entry, rect, destCanvas) {
+    const { sx, sy, sw, sh } = this.sourceBox(entry, rect)
+    if (sw < 0.5 || sh < 0.5) return false
     const ctx = destCanvas.getContext('2d')
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(entry.canvas, sx, sy, sw, sh, 0, 0, destCanvas.width, destCanvas.height)

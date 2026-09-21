@@ -24,6 +24,15 @@ it, or resets it to the original. `Ctrl`+`Z` undoes, `Del` removes the selected
 line, `Esc` deselects. The page you see while editing is what the exported file
 contains.
 
+## What you can do to an image
+
+Click any image to select it. Drag it to move, drag a corner to resize, or use
+the panel to replace it with a PNG or JPEG, nudge it, or delete it. A moved or
+resized image is re-drawn through the very same object already in the file, so
+its pixels are never decoded or re-encoded - only a replacement brings in new
+data. Images inside form XObjects, and pages drawn as one flat picture, are
+not offered for editing.
+
 ## How it stays faithful to the original
 
 Nothing is re-rendered or rebuilt on export. The uploaded file is kept as-is

@@ -1,6 +1,10 @@
 import { PDFDocument, degrees, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { coverRect } from './plateBuild.js'
+import { currentRect, imageChanged } from './images.js'
+import { findXObjectOps, removeRanges } from './contentStream.js'
+import { pageContentBytes, setPageContent } from './pdfBytes.js'
+import { PDFName, PDFNumber, PDFOperator, PDFOperatorNames as ImgOps } from 'pdf-lib'
 import { fontChain, assignFonts } from './fonts.js'
 import { pushNativeText } from './nativeText.js'
 import { textRewritten } from './edits.js'
@@ -69,6 +73,63 @@ function drawSegments(page, segments, opts, warn) {
 }
 
 /**
+ * Apply every image edit on one page.
+ *
+ * The Do operators that drew the edited images are cut out of the content
+ * stream - they leave no trace in the graphics state, so removing one is
+ * exact - and anything still wanted is painted again at its new place. A
+ * moved or resized image is re-drawn through the very same XObject, so its
+ * pixels are never decoded or re-encoded; only a replacement brings in new
+ * data.
+ */
+async function applyImageEdits(pdfDoc, page, items, warn) {
+  const bytes = pageContentBytes(page)
+  if (!bytes) {
+    warn(`Page's drawing instructions could not be read, so its images were left as they are.`)
+    return
+  }
+
+  const ops = findXObjectOps(bytes)
+  const cut = []
+  for (const { image } of items) {
+    const op = ops[image.opIndex]
+    if (op && op.name === image.name) cut.push(op)
+  }
+  if (cut.length !== items.length) {
+    warn('Some images could not be located in the page and were left alone.')
+  }
+  if (cut.length) setPageContent(pdfDoc, page, removeRanges(bytes, cut))
+
+  for (const { image, edit } of items) {
+    if (edit.deleted) continue
+    const rect = currentRect(image, edit)
+
+    if (edit.replacement) {
+      try {
+        const embedded = edit.replacement.type === 'image/png'
+          ? await pdfDoc.embedPng(edit.replacement.bytes)
+          : await pdfDoc.embedJpg(edit.replacement.bytes)
+        page.drawImage(embedded, { x: rect.x, y: rect.y, width: rect.w, height: rect.h })
+      } catch (err) {
+        warn(`Could not place the replacement image: ${err.message}`)
+      }
+      continue
+    }
+
+    // same XObject, new placement matrix
+    const num = (v) => PDFNumber.of(Math.round(v * 1000) / 1000)
+    page.pushOperators(
+      PDFOperator.of(ImgOps.PushGraphicsState),
+      PDFOperator.of(ImgOps.ConcatTransformationMatrix, [
+        num(rect.w), num(0), num(0), num(rect.h), num(rect.x), num(rect.y),
+      ]),
+      PDFOperator.of(ImgOps.DrawObject, [PDFName.of(image.name)]),
+      PDFOperator.of(ImgOps.PopGraphicsState),
+    )
+  }
+}
+
+/**
  * Produce the edited PDF.
  *
  * The original file is loaded and kept as-is: nothing is re-rendered or
@@ -77,7 +138,7 @@ function drawSegments(page, segments, opts, warn) {
  * at the same baseline, in the same font, size and colour unless the user
  * changed them.
  */
-export async function exportPdf({ originalBytes, pages, edits, plate, onProgress }) {
+export async function exportPdf({ originalBytes, pages, edits, images = [], imageEdits = {}, plate, onProgress }) {
   const pdfDoc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
     updateMetadata: false,
@@ -103,6 +164,23 @@ export async function exportPdf({ originalBytes, pages, edits, plate, onProgress
       if (!byPage.has(p.index)) byPage.set(p.index, [])
       byPage.get(p.index).push({ run, edit })
     }
+  }
+
+  // images are grouped the same way, and have to be dealt with first: they
+  // rewrite the page's content stream, which would throw away anything drawn
+  // onto the page beforehand
+  const imagesByPage = new Map()
+  for (const list of images) {
+    for (const image of list) {
+      const edit = imageEdits[image.id]
+      if (!imageChanged(edit)) continue
+      if (!imagesByPage.has(image.pageIndex)) imagesByPage.set(image.pageIndex, [])
+      imagesByPage.get(image.pageIndex).push({ image, edit })
+    }
+  }
+  for (const [pageIndex, items] of imagesByPage) {
+    onProgress?.(`Applying image edits to page ${pageIndex + 1}…`)
+    await applyImageEdits(pdfDoc, pdfDoc.getPage(pageIndex), items, warn)
   }
 
   for (const [pageIndex, items] of byPage) {
