@@ -29,8 +29,12 @@ at a guessed position.
 While a line is being edited it is shown in the very face the page was drawn
 with: pdf.js has already loaded each embedded font into the browser, so the
 overlay asks for that first and anything it has no glyph for falls through to
-the next name by itself - the same thing the export does. Failing that, the
-browser is asked for the document's own
+the next name by itself - the same thing the export does. Where a stand-in is
+used and it measures differently, the difference is put into the gaps between
+words rather than into the letters, since a justified line carries its extra
+width there anyway and stretching the glyphs is exactly what makes a
+substituted face look like a different one. Failing that, the browser is
+asked for the document's own
 typeface by name, and where it is not installed the substitute is measured
 against the original and stretched to match, so the text does not jump
 larger the moment it becomes editable.

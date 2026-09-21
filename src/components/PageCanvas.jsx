@@ -117,13 +117,14 @@ export default function PageCanvas({
  * became visible. Measuring the original text in whatever font the browser
  * actually picked gives the correction that puts it back.
  */
-const scaleCache = new Map()
+const fitCache = new Map()
 let measuringContext = null
 
-function fontScaleFor(run, viewport) {
-  if (scaleCache.has(run.id)) return scaleCache.get(run.id)
-  let scale = 1
+function fitToRun(run, viewport) {
+  if (fitCache.has(run.id)) return fitCache.get(run.id)
+  const fit = { scaleX: 1, wordSpacing: 0 }
   const target = Math.abs(run.width) * viewport.scale
+
   if (target > 1 && run.text.trim()) {
     if (!measuringContext) {
       measuringContext = document.createElement('canvas').getContext('2d')
@@ -133,12 +134,21 @@ function fontScaleFor(run, viewport) {
     const weight = run.bold ? '700 ' : '400 '
     measuringContext.font = `${style}${weight}${size}px ${run.fontFamily}`
     const measured = measuringContext.measureText(run.text).width
-    if (measured > 1) scale = Math.min(2, Math.max(0.5, target / measured))
-  }
-  scaleCache.set(run.id, scale)
-  return scale
-}
 
+    if (measured > 1) {
+      const spaces = [...run.text].filter((ch) => ch === ' ').length
+      const perSpace = spaces ? (target - measured) / spaces : 0
+      // A justified line carries its extra width in the gaps between words,
+      // and so should the correction: squeezing or stretching the glyphs
+      // instead is what makes a substituted face look like a different one.
+      if (spaces && Math.abs(perSpace) < size * 0.4) fit.wordSpacing = perSpace
+      else fit.scaleX = Math.min(2, Math.max(0.5, target / measured))
+    }
+  }
+
+  fitCache.set(run.id, fit)
+  return fit
+}
 /** Map a PDF-space rectangle to a CSS box in the rendered page. */
 function screenRect(rect, viewport) {
   const [x1, y1] = viewport.convertToViewportPoint(rect.x, rect.y + rect.h)
@@ -169,7 +179,7 @@ function RunLayer({
   const dx = (edit?.dx ?? 0) * viewport.scale
   const dy = (edit?.dy ?? 0) * viewport.scale
   const fontPx = box.fontPx * (fontSize / run.fontSize)
-  const stretch = fontScaleFor(run, viewport)
+  const fit = fitToRun(run, viewport)
 
   // paint the erase patch with the real page background behind the text
   useEffect(() => {
@@ -246,7 +256,7 @@ function RunLayer({
           top: `${box.top - dy}px`,
           transform: [
             box.angleDeg ? `rotate(${box.angleDeg}deg)` : '',
-            Math.abs(stretch - 1) > 0.02 ? `scaleX(${stretch.toFixed(4)})` : '',
+            Math.abs(fit.scaleX - 1) > 0.02 ? `scaleX(${fit.scaleX.toFixed(4)})` : '',
           ].filter(Boolean).join(' ') || undefined,
           transformOrigin: 'left top',
           minWidth: `${Math.max(10, box.width)}px`,
@@ -256,6 +266,7 @@ function RunLayer({
           fontFamily: run.fontFamily,
           fontWeight: bold ? 700 : 400,
           fontStyle: italic ? 'italic' : 'normal',
+          wordSpacing: fit.wordSpacing ? `${fit.wordSpacing.toFixed(2)}px` : undefined,
           // an untouched run stays invisible so the original pixels show through
           color: touched ? color : 'transparent',
           caretColor: color,
