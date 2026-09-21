@@ -1,4 +1,5 @@
 import {
+  PDFArray,
   PDFDict,
   PDFHexString,
   PDFName,
@@ -45,16 +46,59 @@ function buildEncodingMap(fontObj) {
   return map.size ? map : null
 }
 
+/** The widths a font dictionary declares, as code -> width in 1/1000 em. */
+function declaredWidths(ctx, dict) {
+  const widths = new Map()
+  try {
+    if (String(dict.lookup(PDFName.of('Subtype'))) === '/Type0') {
+      const descendants = dict.lookup(PDFName.of('DescendantFonts'), PDFArray)
+      const cidFont = ctx.lookup(descendants.get(0), PDFDict)
+      const w = cidFont.lookup(PDFName.of('W'), PDFArray)
+      if (!w) return widths
+      let i = 0
+      while (i < w.size()) {
+        const first = w.lookup(i)?.asNumber?.()
+        const second = w.lookup(i + 1)
+        if (second instanceof PDFArray) {
+          for (let k = 0; k < second.size(); k += 1) {
+            widths.set(first + k, second.lookup(k)?.asNumber?.() ?? 0)
+          }
+          i += 2
+        } else {
+          const last = second?.asNumber?.()
+          const value = w.lookup(i + 2)?.asNumber?.() ?? 0
+          for (let c = first; c <= last && c - first < 4096; c += 1) widths.set(c, value)
+          i += 3
+        }
+      }
+      return widths
+    }
+
+    const first = dict.lookup(PDFName.of('FirstChar'))?.asNumber?.() ?? 0
+    const list = dict.lookup(PDFName.of('Widths'), PDFArray)
+    if (!list) return widths
+    for (let k = 0; k < list.size(); k += 1) {
+      widths.set(first + k, list.lookup(k)?.asNumber?.() ?? 0)
+    }
+  } catch {
+    /* an unreadable dictionary simply scores nothing */
+  }
+  return widths
+}
+
 /**
  * Find the resource name (/F1, /C0_2 …) the page uses for this typeface.
  *
- * A page can carry several resources with the same BaseFont, each subset with
- * its own encoding, where one character code means different things. The font
- * object pdf.js hands back does not say which one drew a given run, so an
- * ambiguous name counts as no match rather than a guess: writing codes
- * against the wrong resource prints the wrong glyphs, or nothing at all.
+ * A page can carry several resources sharing one BaseFont, each subset with
+ * its own encoding, and the font object pdf.js hands back does not say which
+ * one drew a given run. Where the name alone is ambiguous they are told apart
+ * by their declared widths: the right one agrees with the widths pdf.js read
+ * for this very font, character for character. Still ambiguous means no
+ * match, because writing codes against the wrong resource prints the wrong
+ * glyphs, or nothing.
  */
-function resourceNameFor(pdfLibPage, baseFont) {
+function resourceNameFor(pdfLibPage, fontObj, codes) {
+  const baseFont = fontObj?.name
   if (!baseFont) return null
   let fonts
   try {
@@ -73,9 +117,20 @@ function resourceNameFor(pdfLibPage, baseFont) {
     } catch {
       continue
     }
-    if (dict?.lookup(PDFName.of('BaseFont'))?.decodeText?.() === baseFont) matches.push(name)
+    if (dict?.lookup(PDFName.of('BaseFont'))?.decodeText?.() === baseFont) matches.push([name, dict])
   }
-  return matches.length === 1 ? matches[0] : null
+  if (matches.length === 1) return matches[0][0]
+  if (!matches.length || !codes?.length) return null
+
+  const wanted = fontObj.widths || {}
+  const sample = [...new Set(codes)].slice(0, 24).filter((code) => typeof wanted[code] === 'number')
+  if (!sample.length) return null
+
+  const agreeing = matches.filter(([, dict]) => {
+    const declared = declaredWidths(ctx, dict)
+    return sample.every((code) => Math.abs((declared.get(code) ?? -1) - wanted[code]) < 1)
+  })
+  return agreeing.length === 1 ? agreeing[0][0] : null
 }
 
 /** Width of the given character codes, in text-space units at `size`. */
@@ -148,9 +203,6 @@ export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
   if (!fontObj || fontObj.isType3Font) return null
   const map = encodingMapFor(fontObj)
   if (!map) return null
-  const name = resourceNameFor(pdfLibPage, fontObj.name)
-  if (!name) return null
-
   const bytes = fontObj.composite ? 2 : 1
   const limit = bytes === 1 ? 0xff : 0xffff
   const hasGlyph = glyphTest(fontObj, fk, run)
@@ -166,37 +218,55 @@ export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
     return codes
   }
 
-  // Subset fonts routinely have no space glyph - the original spacing came
-  // from text positioning instead. Recover what a space is worth here by
-  // taking the run's known width and subtracting everything that is not one.
+  // What a space is worth on this line, which is not what the font says.
+  //
+  // A justified line is set by widening its spaces, and a subset font often
+  // has no space glyph at all because the original spacing came from text
+  // positioning. Both are recovered the same way: take the width the page
+  // gives this run and subtract everything in it that is not a space. The
+  // difference from the font's own space is exactly the word spacing the
+  // page had set, and writing it back is what keeps a justified line
+  // justified after an edit.
   const chars = [...run.text]
   const spaceCount = chars.filter((c) => /\s/.test(c)).length
   const inkCodes = encode(chars.filter((c) => !/\s/.test(c)).join(''))
   if (!inkCodes || !inkCodes.length) return null
+  const name = resourceNameFor(pdfLibPage, fontObj, inkCodes)
+  if (!name) return null
+
   const inkWidth = widthOfCodes(fontObj, inkCodes, run.fontSize)
   const runWidth = Math.abs(run.width)
   if (!runWidth) return null
 
-  let spaceWidth = 0
+  const spaceCodes = encode(' ')
+  const fontSpace = spaceCodes ? widthOfCodes(fontObj, spaceCodes, run.fontSize) : 0
+
+  let spaceWidth = fontSpace
   if (spaceCount) {
     spaceWidth = (runWidth - inkWidth) / spaceCount
-    // a space worth less than a hairline or more than half an em means these
-    // are not the codes this run was drawn with
-    if (spaceWidth < run.fontSize * 0.05 || spaceWidth > run.fontSize * 0.6) return null
+    // a space worth less than a hairline or more than an em means these are
+    // not the codes this run was drawn with
+    if (spaceWidth < run.fontSize * 0.05 || spaceWidth > run.fontSize) return null
   } else if (!inkWidth || Math.abs(inkWidth - runWidth) / runWidth > 0.15) {
     return null
   }
 
-  const spaceAt = (size) => (size / run.fontSize) * spaceWidth
+  const extraPerSpace = spaceCount ? spaceWidth - fontSpace : 0
+  const at = (value, size) => (size / run.fontSize) * value
+  const spacesIn = (text) => [...text].filter((c) => /\s/.test(c)).length
 
   return {
     name,
     encode,
     covers: (text) => (isSpace(text) ? spaceWidth > 0 || encode(text) !== null : encode(text) !== null),
+    // the extra a space carries here, as the PDF word spacing it came from
+    wordSpacingAt: (size) => at(extraPerSpace, size),
+    spaceCode: spaceCodes ? spaceCodes[0] : null,
+    bytes,
     widthOf: (text, size) => {
       const codes = encode(text)
-      if (codes) return widthOfCodes(fontObj, codes, size)
-      return isSpace(text) ? [...text].length * spaceAt(size) : 0
+      if (codes) return widthOfCodes(fontObj, codes, size) + spacesIn(text) * at(extraPerSpace, size)
+      return isSpace(text) ? [...text].length * at(spaceWidth, size) : 0
     },
     hex: (codes) => codes.map((c) => c.toString(16).padStart(bytes * 2, '0')).join(''),
   }
@@ -220,9 +290,40 @@ export function pushNativeText(pdfLibPage, writer, { text, x, y, size, color, an
     PDFOperator.of(Ops.NonStrokingColorRgb, [num(color.red), num(color.green), num(color.blue)]),
     PDFOperator.of(Ops.SetFontAndSize, [writer.name, num(size)]),
     PDFOperator.of(Ops.SetTextMatrix, [num(cos), num(sin), num(-sin), num(cos), num(x), num(y)]),
-    PDFOperator.of(Ops.ShowText, [PDFHexString.of(writer.hex(codes))]),
+    showText(pdfLibPage, writer, codes, size),
     PDFOperator.of(Ops.EndText),
     PDFOperator.of(Ops.PopGraphicsState),
   )
   return true
+}
+
+/**
+ * Draw the codes, widening the spaces to the width the line was set at.
+ *
+ * The word spacing operator would be the obvious way to do that, but it is
+ * defined to act on the single byte 32 and so does nothing at all for the
+ * two-byte codes most modern PDFs use. An adjusted show, which shifts the
+ * pen between pieces of the string, works for either kind.
+ */
+function showText(pdfLibPage, writer, codes, size) {
+  const extra = writer.wordSpacingAt?.(size) || 0
+  const spaceCode = writer.spaceCode
+  if (!extra || spaceCode === null || spaceCode === undefined) {
+    return PDFOperator.of(Ops.ShowText, [PDFHexString.of(writer.hex(codes))])
+  }
+
+  // a positive number in the array moves the pen back, so widening is negative
+  const shift = PDFNumber.of(Math.round((-extra / size) * 100000) / 100)
+  const pieces = PDFArray.withContext(pdfLibPage.node.context)
+  let chunk = []
+  for (const code of codes) {
+    chunk.push(code)
+    if (code !== spaceCode) continue
+    pieces.push(PDFHexString.of(writer.hex(chunk)))
+    pieces.push(shift)
+    chunk = []
+  }
+  if (chunk.length) pieces.push(PDFHexString.of(writer.hex(chunk)))
+
+  return PDFOperator.of(Ops.ShowTextAdjusted, [pieces])
 }

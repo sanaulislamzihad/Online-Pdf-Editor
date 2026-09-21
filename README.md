@@ -116,6 +116,11 @@ path is refused, rather than guessed at, when it cannot be trusted:
 - for Bengali, Devanagari, Arabic and other shaped scripts, whose text a PDF
   stores already shaped in visual order.
 
+A justified line keeps its justification: the width its spaces were widened
+to is recovered from the run itself and written back, through an adjusted
+show rather than the word-spacing operator, which is defined to act on a
+single byte and so does nothing for the two-byte codes most PDFs use.
+
 Only the span that actually changed is given a font this way. Everything
 else on the line is still the document's own characters and is written back
 through the font it came from, code for code. That matters most where a PDF
