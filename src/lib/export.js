@@ -1,56 +1,13 @@
-import { PDFDocument, degrees, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, degrees, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { coverRect } from './plateBuild.js'
+import { fontChain, assignFonts } from './fonts.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
   if (!m) return rgb(0, 0, 0)
   const v = parseInt(m[1], 16)
   return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255)
-}
-
-const STANDARD = {
-  sans: [StandardFonts.Helvetica, StandardFonts.HelveticaBold, StandardFonts.HelveticaOblique, StandardFonts.HelveticaBoldOblique],
-  serif: [StandardFonts.TimesRoman, StandardFonts.TimesRomanBold, StandardFonts.TimesRomanItalic, StandardFonts.TimesRomanBoldItalic],
-  mono: [StandardFonts.Courier, StandardFonts.CourierBold, StandardFonts.CourierOblique, StandardFonts.CourierBoldOblique],
-}
-
-function standardNameFor(run, bold, italic) {
-  const fam = /Times|serif/i.test(run.fontFamily) ? 'serif'
-    : /Courier|mono/i.test(run.fontFamily) ? 'mono' : 'sans'
-  return STANDARD[fam][(bold ? 1 : 0) + (italic ? 2 : 0)]
-}
-
-/**
- * Pick the font to redraw a run with. The document's own embedded font is
- * reused whenever the user did not change weight or slant, so edited text
- * keeps exactly the glyph shapes the rest of the page uses.
- */
-async function resolveFont(pdfDoc, pdfjsPage, run, bold, italic, cache, warn) {
-  const styleChanged = bold !== run.bold || italic !== run.italic
-  if (!styleChanged) {
-    const key = `embedded:${run.fontName}`
-    if (cache.has(key)) return cache.get(key)
-    try {
-      const obj = pdfjsPage.commonObjs.has(run.fontName)
-        ? pdfjsPage.commonObjs.get(run.fontName)
-        : null
-      const data = obj?.data
-      if (data && data.length > 0) {
-        const font = await pdfDoc.embedFont(data, { subset: false })
-        cache.set(key, font)
-        return font
-      }
-    } catch {
-      warn(`Could not reuse the embedded font “${run.fontRawName}”; a close match was used instead.`)
-    }
-  }
-  const name = standardNameFor(run, bold, italic)
-  const key = `std:${name}`
-  if (cache.has(key)) return cache.get(key)
-  const font = await pdfDoc.embedFont(name)
-  cache.set(key, font)
-  return font
 }
 
 const SMART = [
@@ -61,27 +18,45 @@ const SMART = [
   [/[   ]/g, ' '],
 ]
 
-function drawRunText(page, text, opts, warn) {
-  try {
-    page.drawText(text, opts)
-    return
-  } catch {
-    /* the font cannot encode something - try progressively simpler text */
-  }
-  let fixed = text
-  for (const [re, to] of SMART) fixed = fixed.replace(re, to)
-  try {
-    page.drawText(fixed, opts)
-    return
-  } catch {
-    /* fall through */
-  }
-  const ascii = fixed.replace(/[^\x20-\x7e¡-ÿ]/g, '')
-  try {
-    page.drawText(ascii, opts)
-    warn('Some characters are missing from the fallback font and were dropped.')
-  } catch (err) {
-    warn(`Could not draw “${text.slice(0, 24)}”: ${err.message}`)
+/**
+ * Draw one line, switching font per script run and advancing the pen by each
+ * piece's own measured width so the pieces join up seamlessly.
+ */
+function drawSegments(page, segments, opts, warn) {
+  const cos = Math.cos(opts.angle || 0)
+  const sin = Math.sin(opts.angle || 0)
+  let cursor = 0
+  for (const seg of segments) {
+    const o = {
+      ...opts,
+      font: seg.font,
+      x: opts.x + cursor * cos,
+      y: opts.y + cursor * sin,
+    }
+    delete o.angle
+    let text = seg.text
+    try {
+      page.drawText(text, o)
+    } catch {
+      for (const [re, to] of SMART) text = text.replace(re, to)
+      try {
+        page.drawText(text, o)
+      } catch {
+        text = text.replace(/[^ -~¡-ÿ]/g, '')
+        try {
+          page.drawText(text, o)
+          warn('Some characters could not be written with any available font and were dropped.')
+        } catch (err) {
+          warn(`Could not draw “${seg.text.slice(0, 24)}”: ${err.message}`)
+          continue
+        }
+      }
+    }
+    try {
+      cursor += seg.font.widthOfTextAtSize(text, opts.size)
+    } catch {
+      cursor += text.length * opts.size * 0.5
+    }
   }
 }
 
@@ -147,13 +122,19 @@ export async function exportPdf({ originalBytes, pages, edits, plate, onProgress
       if (!text) continue
       const bold = edit.bold ?? run.bold
       const italic = edit.italic ?? run.italic
-      const font = await resolveFont(pdfDoc, pdfjsPage, run, bold, italic, fontCache, warn)
-      drawRunText(page, text, {
+      const { chain, notes } = await fontChain({
+        pdfDoc, pdfjsPage, run, bold, italic, text, cache: fontCache,
+      })
+      const { segments, unsupported } = assignFonts(text, chain)
+      if (unsupported && notes.length) {
+        warn(`“${run.fontRawName}” has no glyphs for some of the new text; ${notes[0]} was used there.`)
+      }
+      drawSegments(page, segments, {
         x: run.x + (edit.dx ?? 0),
         y: run.y + (edit.dy ?? 0),
         size: edit.fontSize ?? run.fontSize,
-        font,
         color: hexToRgb(edit.color ?? run.color),
+        angle: run.angle,
         rotate: run.angle ? degrees((run.angle * 180) / Math.PI) : undefined,
       }, warn)
     }

@@ -11,6 +11,9 @@ export async function loadPdf(arrayBuffer) {
     // keep the original glyph mapping so extracted strings match the file
     disableNormalization: true,
     useSystemFonts: false,
+    // without this pdf.js drops each font's bytes once it has drawn with
+    // them, and export could not reuse the document's own typefaces
+    fontExtraProperties: true,
   })
   return task.promise
 }
