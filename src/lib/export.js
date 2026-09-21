@@ -221,7 +221,9 @@ export async function exportPdf({ originalBytes, pages, edits, images = [], imag
         pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text, cache: fontCache,
       })
       const { segments, unsupported, lost, swapped } = planSegments({
-        original: run.text,
+        // a line read back off the page has nothing in common with the
+        // characters the file claimed, so none of it is carried over
+        original: edit.recognised ? '' : run.text,
         text,
         chain,
       })

@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadPdf, extractRuns } from './lib/extract.js'
 import { exportPdf } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
+import { coverRect } from './lib/plateBuild.js'
 import { hasChanges } from './lib/edits.js'
-import { extractImages, imageChanged } from './lib/images.js'
-import { OCR_LANGUAGES, looksScanned, recognisePage } from './lib/ocr.js'
+import { currentRect, extractImages, imageChanged } from './lib/images.js'
+import {
+  OCR_LANGUAGES, looksScanned, recogniseImage, recogniseLine, recognisePage,
+} from './lib/ocr.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
 
@@ -23,6 +26,7 @@ export default function App() {
   const [imagePlateReady, setImagePlateReady] = useState(false)
   const [language, setLanguage] = useState('eng')
   const [ocrPage, setOcrPage] = useState(null)
+  const [reading, setReading] = useState(false)
   const bytesRef = useRef(null)
   const plateRef = useRef(null)
   const imagePlateRef = useRef(null)
@@ -148,6 +152,63 @@ export default function App() {
       setOcrPage(null)
     }
   }, [pages, language, ocrPage])
+
+  // Reading a line back off its own pixels. A PDF whose character map was
+  // written badly gives mojibake no amount of care can undo, but the page
+  // still draws the line correctly, and that picture can be read.
+  const recogniseRun = useCallback(async () => {
+    const run = selectedId ? runById.get(selectedId) : null
+    const target = run ? pages.find((p) => p.index === run.pageIndex) : null
+    if (!run || !target || reading) return
+    setReading(true)
+    try {
+      const found = await recogniseLine({
+        page: target.page,
+        rect: coverRect(run),
+        language,
+        onProgress: setStatus,
+      })
+      if (found) {
+        editRun(run.id, { text: found, recognised: true })
+        setStatus(`Read as “${found}”. Edit it like any other line.`)
+      } else {
+        setStatus('Nothing could be read from that line.')
+      }
+    } catch (err) {
+      console.error(err)
+      setStatus(`Could not read that line: ${err.message}`)
+    } finally {
+      setReading(false)
+    }
+  }, [selectedId, runById, pages, language, reading, editRun])
+
+  const recogniseInImage = useCallback(async () => {
+    const image = selectedImageId ? imageById.get(selectedImageId) : null
+    const target = image ? pages.find((p) => p.index === image.pageIndex) : null
+    if (!image || !target || reading) return
+    setReading(true)
+    try {
+      const found = await recogniseImage({
+        page: target.page,
+        pageIndex: image.pageIndex,
+        rect: currentRect(image, imageEdits[image.id]),
+        language,
+        onProgress: setStatus,
+        idPrefix: `${image.id}_t`,
+      })
+      setPages((prev) => prev.map((p) => (
+        p.index === image.pageIndex ? { ...p, runs: [...p.runs, ...found] } : p
+      )))
+      setStatus(found.length
+        ? `Read ${found.length} line(s) out of the image. They can be edited in place.`
+        : 'No text could be read in that image.')
+    } catch (err) {
+      console.error(err)
+      setStatus(`Could not read that image: ${err.message}`)
+    } finally {
+      setReading(false)
+    }
+  }, [selectedImageId, imageById, imageEdits, pages, language, reading])
 
   const isPristine = (edit, run) => !!edit && !hasChanges(edit, run)
 
@@ -351,6 +412,9 @@ export default function App() {
           edit={selectedId ? edits[selectedId] : null}
           image={selectedImage}
           imageEdit={selectedImageId ? imageEdits[selectedImageId] : null}
+          busy={reading}
+          onRecogniseRun={recogniseRun}
+          onRecogniseImage={recogniseInImage}
           onEdit={(patch) => selectedId && editRun(selectedId, patch)}
           onEditImage={(patch) => selectedImageId && editImage(selectedImageId, patch)}
           onReplaceImage={() => replaceInputRef.current?.click()}

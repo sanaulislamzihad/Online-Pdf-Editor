@@ -33,6 +33,25 @@ its pixels are never decoded or re-encoded - only a replacement brings in new
 data. Images inside form XObjects, and pages drawn as one flat picture, are
 not offered for editing.
 
+## Reading text off the picture
+
+Two things on a page are pixels rather than text: a scan, and any picture
+with words in it. Both can be read back.
+
+A page that is one big picture gets a banner offering to read the whole of
+it. Select an image and the panel offers to read just that image, which is
+how the words in a screenshot become editable lines sitting where they are
+drawn. A screenshot is often part light and part dark, and syntax colouring
+makes layout analysis skip whole lines, so the picture is read twice - once
+as it is and once flattened to plain black on white - and any line only the
+flattened pass saw is then read again on its own from the original.
+
+The same button appears on a line of real text the PDF describes badly.
+Bengali files whose producer wrote the character map in painting order come
+out as mojibake with their conjuncts missing, and no amount of care with the
+file can undo that - but the page still draws the line correctly, so reading
+that picture gives back text that can be read and edited.
+
 ## Scanned pages
 
 A page that is one big picture with no text objects gets a banner offering to

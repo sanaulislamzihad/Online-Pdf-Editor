@@ -3,7 +3,8 @@ import ImagePanel from './ImagePanel.jsx'
 const SWATCHES = ['#000000', '#374151', '#6b7280', '#b91c1c', '#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#ffffff']
 
 export default function Inspector({
-  run, edit, image, imageEdit, onEdit, onEditImage, onReplaceImage, onResetImage, onReset,
+  run, edit, image, imageEdit, busy, onEdit, onEditImage, onReplaceImage,
+  onResetImage, onReset, onRecogniseRun, onRecogniseImage,
 }) {
   if (image) {
     return (
@@ -13,6 +14,8 @@ export default function Inspector({
         onEdit={onEditImage}
         onReplace={onReplaceImage}
         onReset={onResetImage}
+        onRecognise={onRecogniseImage}
+        busy={busy}
       />
     )
   }
@@ -57,9 +60,16 @@ export default function Inspector({
           <p className="mt-1">
             The PDF does not say what a few of these glyphs are, so the text above
             reads wrongly. Editing is still safe — whatever you do not touch is put
-            back exactly as it is now. Bold and italic are off, because they would
-            drop those characters.
+            back exactly as it is now. To read and rewrite the whole line properly,
+            have it read off the page instead.
           </p>
+          <button
+            onClick={onRecogniseRun}
+            disabled={busy}
+            className="mt-2 w-full rounded border border-amber-400 bg-white px-2 py-1.5 font-medium hover:bg-amber-100 disabled:opacity-50"
+          >
+            {busy ? 'Reading…' : 'Read this line from the page'}
+          </button>
         </div>
       )}
 

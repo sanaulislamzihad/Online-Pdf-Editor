@@ -1,7 +1,7 @@
 import { currentRect } from '../lib/images.js'
 
 /** Controls for the selected image: move, resize, replace, remove. */
-export default function ImagePanel({ image, edit, onEdit, onReplace, onReset }) {
+export default function ImagePanel({ image, edit, onEdit, onReplace, onReset, onRecognise, busy }) {
   const rect = currentRect(image, edit)
   const deleted = !!edit?.deleted
   const nudge = (ddx, ddy) => onEdit({ dx: (edit?.dx ?? 0) + ddx, dy: (edit?.dy ?? 0) + ddy })
@@ -52,6 +52,20 @@ export default function ImagePanel({ image, edit, onEdit, onReplace, onReset }) 
           <span />
         </div>
         <p className="mt-1.5 text-[11px] text-slate-400">Or drag the image, and its corners to resize.</p>
+      </Group>
+
+      <Group label="Text inside">
+        <button
+          onClick={onRecognise}
+          disabled={busy || deleted}
+          className="w-full rounded border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          {busy ? 'Reading…' : 'Read text in this image'}
+        </button>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+          Words drawn inside a picture are pixels, not text. Reading them makes
+          each line editable where it sits.
+        </p>
       </Group>
 
       <div className="space-y-2 border-t border-slate-200 pt-3">
