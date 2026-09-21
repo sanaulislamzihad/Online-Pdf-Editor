@@ -48,7 +48,11 @@ export default function Inspector({
     <aside className="w-64 shrink-0 space-y-4 overflow-y-auto border-l border-slate-200 bg-white p-4">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Selected text</p>
-        <p className="mt-1 truncate text-sm font-medium" title={run.text}>{run.text}</p>
+        {locked ? (
+          <p className="mt-1 text-sm italic text-slate-400">not readable</p>
+        ) : (
+          <p className="mt-1 truncate text-sm font-medium" title={run.text}>{run.text}</p>
+        )}
         <p className="mt-0.5 truncate text-[11px] text-slate-400" title={run.fontRawName}>{run.fontRawName}</p>
       </div>
 
@@ -56,16 +60,10 @@ export default function Inspector({
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2.5 text-[12px] leading-relaxed text-amber-900">
           <p className="font-semibold">This line cannot be read back</p>
           <p className="mt-1">
-            The PDF does not say what some of these glyphs are, so the text above is
-            not what the page shows. Type the line again to replace it; styling it as
-            it stands would print the wrong characters.
+            The PDF does not say what some of these glyphs are, so the characters
+            behind this line are not the ones it shows. The box is empty on purpose:
+            type the line as you want it and the whole line is replaced.
           </p>
-          <button
-            onClick={() => onEdit({ text: '' })}
-            className="mt-2 w-full rounded border border-amber-400 bg-white px-2 py-1.5 font-medium hover:bg-amber-100"
-          >
-            Clear and retype
-          </button>
         </div>
       )}
 

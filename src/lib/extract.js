@@ -100,9 +100,18 @@ async function awaitFonts(page, items) {
   ])
 }
 
-// Bengali dependent vowel signs, and the code points pdf.js falls back to
-// when a glyph has no character behind it at all.
+// Bengali vowel signs that are drawn to the LEFT of their consonant. A PDF
+// stores glyphs in the order they were painted, so in a file whose ToUnicode
+// table was written from that order, these come back before the consonant
+// they belong to instead of after it.
+const isPreBaseMatra = (c) => c === 0x09bf || c === 0x09c7 || c === 0x09c8 ||
+  c === 0x09cb || c === 0x09cc
 const isMatra = (c) => (c >= 0x09be && c <= 0x09cc) || c === 0x09d7
+const isConsonant = (c) => (c >= 0x0995 && c <= 0x09b9) ||
+  (c >= 0x09dc && c <= 0x09df) || c === 0x09ce
+// marks that attach to the letter before them without replacing it:
+// chandrabindu, anusvara, visarga, nukta and hasanta
+const isAttached = (c) => (c >= 0x0981 && c <= 0x0983) || c === 0x09bc || c === 0x09cd
 const isUnmapped = (c) => c === 0xfffd || (c >= 0xe000 && c <= 0xf8ff)
 const isBlank = (c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0xa0
 
@@ -120,12 +129,15 @@ export function looksScrambled(text) {
   for (const ch of text) {
     const c = ch.codePointAt(0)
     if (isUnmapped(c)) return true
-    // a vowel sign has to follow a consonant: a leading or doubled one means
-    // the glyphs came back in the order they were drawn
-    if (isMatra(c) && (previous < 0 || isMatra(previous) || isBlank(previous))) {
-      return true
+
+    if (isMatra(c)) {
+      // any vowel sign must follow a letter; a leading or doubled one is
+      // already proof that the glyphs came back in painting order
+      if (previous < 0 || isBlank(previous) || isMatra(previous)) return true
+      // and a left-side one must follow the consonant it wraps
+      if (isPreBaseMatra(c) && !isConsonant(previous)) return true
     }
-    previous = c
+    if (!isAttached(c)) previous = c
   }
   return false
 }
