@@ -11,9 +11,15 @@ export class PlateStore {
     this.failed = false
     this.cache = new Map()
     this.pending = new Map()
+    this.loading = null
   }
 
-  async load(originalBytes) {
+  load(originalBytes) {
+    this.loading = this.#load(originalBytes)
+    return this.loading
+  }
+
+  async #load(originalBytes) {
     try {
       const bytes = await buildPlateBytes(originalBytes)
       if (!bytes) { this.failed = true; return false }
@@ -27,6 +33,7 @@ export class PlateStore {
   }
 
   async getPage(pageIndex) {
+    if (!this.doc && this.loading) await this.loading
     if (!this.doc) return null
     if (this.cache.has(pageIndex)) return this.cache.get(pageIndex)
     if (this.pending.has(pageIndex)) return this.pending.get(pageIndex)

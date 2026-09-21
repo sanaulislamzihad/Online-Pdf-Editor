@@ -54,16 +54,21 @@ function fontInfoFor(page, fontName) {
 
   // the name is a better signal than the descriptor's serif flag, which
   // word processors set carelessly
-  let family = '"Helvetica Neue", Helvetica, Arial, sans-serif'
+  let kind = 'sans'
   if (/courier|mono|consol/.test(lower)) {
-    family = '"Courier New", Courier, monospace'
+    kind = 'mono'
   } else if (/times|serif|georgia|garamond|book|roman|minion|cambria|palatino/.test(lower)) {
-    family = '"Times New Roman", Times, serif'
+    kind = 'serif'
   } else if (!/arial|helvetica|calibri|verdana|tahoma|segoe|roboto|lato|open ?sans|futura|gothic/.test(lower)) {
-    if (obj?.isMonospace) family = '"Courier New", Courier, monospace'
-    else if (obj?.isSerifFont) family = '"Times New Roman", Times, serif'
+    if (obj?.isMonospace) kind = 'mono'
+    else if (obj?.isSerifFont) kind = 'serif'
   }
-  return { rawName: clean, family, bold, italic }
+  const CSS = {
+    sans: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+    serif: '"Times New Roman", Times, serif',
+    mono: '"Courier New", Courier, monospace',
+  }
+  return { rawName: clean, kind, family: CSS[kind], bold, italic }
 }
 
 /**
@@ -112,6 +117,7 @@ export async function extractRuns(page, pageIndex) {
       fontName: item.fontName,
       fontRawName: info.rawName,
       fontFamily: info.family,
+      fontKind: info.kind,
       bold: info.bold,
       italic: info.italic,
       color: '#000000',

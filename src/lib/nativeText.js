@@ -80,10 +80,41 @@ function widthOfCodes(fontObj, codes, size) {
 }
 
 /**
+ * Which characters does this font really have a glyph for?
+ *
+ * A subset's ToUnicode table routinely describes the whole original encoding
+ * while the font file itself only carries the handful of glyphs that were
+ * printed, so a character code existing proves nothing. The rebuilt font from
+ * pdf.js is checked instead; when it cannot be read, only characters the run
+ * already displays are trusted.
+ */
+function glyphTest(fontObj, fk, run) {
+  const toFontChar = fontObj.toFontChar || []
+  if (!fk) {
+    const known = new Set([...run.text])
+    return (ch) => known.has(ch)
+  }
+  const cache = new Map()
+  return (ch, code) => {
+    if (cache.has(ch)) return cache.get(ch)
+    let ok = false
+    try {
+      const point = toFontChar[code]
+      const glyph = fk.glyphForCodePoint(point === undefined ? code : point)
+      ok = !!glyph && glyph.id !== 0
+    } catch {
+      ok = false
+    }
+    cache.set(ch, ok)
+    return ok
+  }
+}
+
+/**
  * Build a writer for a run, or null when the page's own font cannot be used
  * (no usable encoding, a Type 3 font, or an ambiguous resource).
  */
-export function nativeWriter({ pdfLibPage, fontObj, run }) {
+export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
   if (!fontObj || fontObj.isType3Font) return null
   const map = encodingMapFor(fontObj)
   if (!map) return null
@@ -92,12 +123,14 @@ export function nativeWriter({ pdfLibPage, fontObj, run }) {
 
   const bytes = fontObj.composite ? 2 : 1
   const limit = bytes === 1 ? 0xff : 0xffff
+  const hasGlyph = glyphTest(fontObj, fk, run)
 
   const encode = (text) => {
     const codes = []
     for (const ch of text) {
       const code = map.get(ch)
       if (code === undefined || code > limit) return null
+      if (!/\s/.test(ch) && !hasGlyph(ch, code)) return null
       codes.push(code)
     }
     return codes

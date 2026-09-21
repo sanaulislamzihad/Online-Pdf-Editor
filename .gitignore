@@ -5,3 +5,5 @@ dist-ssr
 .env
 .DS_Store
 *.log
+
+*.tmp.mjs

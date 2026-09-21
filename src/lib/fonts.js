@@ -21,9 +21,8 @@ const STANDARD = {
 }
 
 function standardNameFor(run, bold, italic) {
-  const fam = /Times|serif/i.test(run.fontFamily) ? 'serif'
-    : /Courier|mono/i.test(run.fontFamily) ? 'mono' : 'sans'
-  return STANDARD[fam][(bold ? 1 : 0) + (italic ? 2 : 0)]
+  const family = STANDARD[run.fontKind] || STANDARD.sans
+  return family[(bold ? 1 : 0) + (italic ? 2 : 0)]
 }
 
 /** Characters the 14 built-in PDF fonts can write (WinAnsi). */
@@ -114,7 +113,12 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
     } catch {
       obj = null
     }
-    const writer = nativeWriter({ pdfLibPage, fontObj: obj, run })
+    const writer = nativeWriter({
+      pdfLibPage,
+      fontObj: obj,
+      fk: obj?.data?.length ? parse(obj.data) : null,
+      run,
+    })
     if (writer) chain.push({ native: writer })
   }
 
@@ -146,14 +150,24 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
 
 /** Assign each script run the first font in the chain that can draw it. */
 export function assignFonts(text, chain) {
+  const parts = scriptRuns(text)
+
+  // the page's own font is all-or-nothing for a line: falling back on just
+  // the words whose glyphs are missing would leave one line in two typefaces
+  const ink = parts.filter((p) => p.cls !== 'space')
+  let usable = chain
+  if (chain[0]?.native && !ink.every((p) => covers(chain[0], p.text))) {
+    usable = chain.slice(1)
+  }
+
   const segments = []
   const swapped = new Set()
   let unsupported = false
-  for (const part of scriptRuns(text)) {
-    let chosen = chain.find((cand) => covers(cand, part.text))
+  for (const part of parts) {
+    let chosen = usable.find((cand) => covers(cand, part.text))
     if (!chosen) {
       unsupported = true
-      chosen = chain[chain.length - 1]
+      chosen = usable[usable.length - 1]
     }
     if (chosen.label && part.text.trim()) swapped.add(chosen.label)
     const last = segments[segments.length - 1]
