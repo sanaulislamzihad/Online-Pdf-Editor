@@ -1,5 +1,6 @@
 import { pdfjsLib, Util } from './pdfjs.js'
 import { textWidthIn } from './nativeText.js'
+import { findParagraphs, measurerFor, paragraphRun, reflowable } from './paragraphs.js'
 import fontkit from '@pdf-lib/fontkit'
 
 /**
@@ -360,7 +361,27 @@ export function finishRuns(page, runs) {
       return null
     }
   }
-  return mergeRuns(runs).flatMap((run) => splitSentences(run, fontOf(run.fontName)))
+  const joined = mergeRuns(runs)
+
+  // a paragraph we can set again becomes one block, so that typing into it
+  // wraps rather than running off the page; everything else is offered as
+  // the sentences it contains
+  const folded = new Map()
+  for (const paragraph of findParagraphs(joined)) {
+    const first = paragraph.lines[0].runs[0]
+    const measure = measurerFor(first, fontOf(first.fontName))
+    if (!reflowable(paragraph, measure)) continue
+    folded.set(first.id, paragraphRun(paragraph, measure))
+    for (const id of paragraph.runIds) if (id !== first.id) folded.set(id, null)
+  }
+
+  return joined.flatMap((run) => {
+    if (folded.has(run.id)) {
+      const block = folded.get(run.id)
+      return block ? [block] : []
+    }
+    return splitSentences(run, fontOf(run.fontName))
+  })
 }
 
 function toHex(r, g, b) {
@@ -557,6 +578,30 @@ export function runToScreenBox(run, viewport) {
   ])
   const height = Math.hypot(m[2], m[3])
   const width = Math.abs(run.width) * viewport.scale
+  if (run.paragraph) {
+    const scale = viewport.scale
+    const [left, top] = viewport.convertToViewportPoint(
+      run.paragraph.left, run.y + run.fontSize * 0.8,
+    )
+    const [, bottom] = viewport.convertToViewportPoint(
+      run.paragraph.left, run.paragraph.bottom,
+    )
+    return {
+      left,
+      top,
+      baselineY: m[5],
+      coverTop: top,
+      coverHeight: bottom - top,
+      width: run.paragraph.width * scale,
+      height: height,
+      fontPx: height,
+      lineHeight: (run.paragraph.drop || run.fontSize * 1.2) * scale,
+      indent: run.paragraph.indent * scale,
+      justified: run.paragraph.justified,
+      angleDeg: 0,
+    }
+  }
+
   return {
     left: m[4],
     baselineY: m[5],

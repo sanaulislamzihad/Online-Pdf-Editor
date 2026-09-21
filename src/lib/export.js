@@ -7,6 +7,7 @@ import { pageContentBytes, setPageContent } from './pdfBytes.js'
 import { PDFName, PDFNumber, PDFOperator, PDFOperatorNames as ImgOps } from 'pdf-lib'
 import { fontChain, planSegments } from './fonts.js'
 import { pushNativeText } from './nativeText.js'
+import { breakLines, measurerFor } from './paragraphs.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -27,6 +28,8 @@ const SMART = [
  * Draw one line, switching font per script run and advancing the pen by each
  * piece's own measured width so the pieces join up seamlessly.
  */
+const spacesIn = (text) => [...text].filter((c) => c === ' ').length
+
 function drawSegments(page, segments, opts, warn) {
   const cos = Math.cos(opts.angle || 0)
   const sin = Math.sin(opts.angle || 0)
@@ -38,7 +41,8 @@ function drawSegments(page, segments, opts, warn) {
 
     if (seg.native) {
       if (pushNativeText(page, seg.native, { ...opts, text: seg.text, x, y })) {
-        cursor += seg.native.widthOf(seg.text, opts.size)
+        cursor += seg.native.widthOf(seg.text, opts.size) +
+          (opts.wordSpacing ? spacesIn(seg.text) * (opts.wordSpacing - (seg.native.wordSpacingAt?.(opts.size) || 0)) : 0)
         continue
       }
     }
@@ -125,6 +129,62 @@ async function applyImageEdits(pdfDoc, page, items, warn) {
       PDFOperator.of(ImgOps.DrawObject, [PDFName.of(image.name)]),
       PDFOperator.of(ImgOps.PopGraphicsState),
     )
+  }
+}
+
+/**
+ * Set a paragraph again across its own lines.
+ *
+ * Its text is broken to the measure the page uses, each line placed on the
+ * baseline it had, and every line but the last widened at the spaces to
+ * reach the margin if the paragraph was justified. Text that no longer fits
+ * in the lines it had carries on below them, which is the one thing a page
+ * of fixed positions cannot absorb quietly.
+ */
+function drawParagraph(page, run, text, chain, pdfjsPage, style, warn) {
+  const shape = run.paragraph
+  const fontObj = (() => {
+    try {
+      return pdfjsPage.commonObjs.has(run.fontName) ? pdfjsPage.commonObjs.get(run.fontName) : null
+    } catch {
+      return null
+    }
+  })()
+  const measure = measurerFor({ ...run, ...shape.probe }, fontObj)
+  const scale = style.size / run.fontSize
+  const widthFor = (index) => shape.width - (index === 0 ? shape.indent : 0)
+  const natural = (value) => (measure?.natural(value) ?? 0) * scale
+
+  const lines = measure
+    ? breakLines(text, natural, widthFor)
+    : [text]
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    const y = i < shape.baselines.length
+      ? shape.baselines[i]
+      : shape.baselines[shape.baselines.length - 1] - (i - shape.baselines.length + 1) * shape.drop
+    const x = shape.left + (i === 0 ? shape.indent : 0)
+
+    const spaces = [...line].filter((c) => c === ' ').length
+    const slack = widthFor(i) - natural(line)
+    const wordSpacing = shape.justified && i < lines.length - 1 && spaces && slack > 0
+      ? slack / spaces
+      : 0
+
+    const { segments } = planSegments({ original: '', text: line, chain })
+    drawSegments(page, segments, {
+      x,
+      y,
+      size: style.size,
+      color: style.color,
+      angle: 0,
+      wordSpacing,
+    }, warn)
+  }
+
+  if (lines.length > shape.baselines.length) {
+    warn('The edited paragraph needed more lines than it had, so it now runs into what follows.')
   }
 }
 
@@ -241,6 +301,14 @@ export async function exportPdf({
       } else if (unsupported) {
         warn(`Some characters in “${text.slice(0, 20)}” have no glyph in any available font.`)
       }
+      if (run.paragraph) {
+        drawParagraph(page, run, text, chain, pdfjsPage, {
+          size: edit.fontSize ?? run.fontSize,
+          color: hexToRgb(edit.color ?? run.color),
+        }, warn)
+        continue
+      }
+
       drawSegments(page, segments, {
         x: run.x + (edit.dx ?? 0),
         y: run.y + (edit.dy ?? 0),

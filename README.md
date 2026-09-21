@@ -18,7 +18,19 @@ npm run build      # static site in dist/ - host it anywhere
 
 ## What you can do to a line
 
-A line is offered as the sentences it contains, and a link or a coloured word
+Where consecutive lines are clearly one paragraph - one font, one left
+margin, evenly spaced, each line but the last reaching the right margin -
+the whole paragraph is offered as a single block, and typing into it wraps.
+The text is broken again to the measure the page uses and each line is put
+back on the baseline it had, justified at the spaces if the paragraph was.
+A paragraph is only treated this way when re-setting it untouched reproduces
+the lines it already has, so one that is not understood is left as ordinary
+lines rather than rearranged wrongly. Text that no longer fits in the lines
+it had carries on below them, and the status line says so - a page of fixed
+positions has nowhere else to put it.
+
+Everything else - headings, table cells, single lines - is offered as the
+sentences it contains, and a link or a coloured word
 within one is offered separately - pdf.js reports a change of font or position
 as a new piece of text but not a change of colour, so where the ink changes
 part way through a line it is found by reading the drawn page character by

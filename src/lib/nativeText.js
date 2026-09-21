@@ -227,15 +227,18 @@ export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
   // difference from the font's own space is exactly the word spacing the
   // page had set, and writing it back is what keeps a justified line
   // justified after an edit.
-  const chars = [...run.text]
+  // a paragraph belongs to its lines, not to all of its text at once, so
+  // it hands over the line it is set in to be measured by
+  const measured = run.paragraph?.probe ?? run
+  const chars = [...measured.text]
   const spaceCount = chars.filter((c) => /\s/.test(c)).length
   const inkCodes = encode(chars.filter((c) => !/\s/.test(c)).join(''))
   if (!inkCodes || !inkCodes.length) return null
   const name = resourceNameFor(pdfLibPage, fontObj, inkCodes)
   if (!name) return null
 
-  const inkWidth = widthOfCodes(fontObj, inkCodes, run.fontSize)
-  const runWidth = Math.abs(run.width)
+  const inkWidth = widthOfCodes(fontObj, inkCodes, measured.fontSize)
+  const runWidth = Math.abs(measured.width)
   if (!runWidth) return null
 
   const spaceCodes = encode(' ')
@@ -246,13 +249,13 @@ export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
     spaceWidth = (runWidth - inkWidth) / spaceCount
     // a space worth less than a hairline or more than an em means these are
     // not the codes this run was drawn with
-    if (spaceWidth < run.fontSize * 0.05 || spaceWidth > run.fontSize) return null
+    if (spaceWidth < measured.fontSize * 0.05 || spaceWidth > measured.fontSize) return null
   } else if (!inkWidth || Math.abs(inkWidth - runWidth) / runWidth > 0.15) {
     return null
   }
 
   const extraPerSpace = spaceCount ? spaceWidth - fontSpace : 0
-  const at = (value, size) => (size / run.fontSize) * value
+  const at = (value, size) => (size / measured.fontSize) * value
   const spacesIn = (text) => [...text].filter((c) => /\s/.test(c)).length
 
   return {
@@ -276,7 +279,7 @@ export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
  * Emit one piece of text with the page's own font resource. Whitespace the
  * font has no glyph for is left as a gap, exactly as the original had it.
  */
-export function pushNativeText(pdfLibPage, writer, { text, x, y, size, color, angle }) {
+export function pushNativeText(pdfLibPage, writer, { text, x, y, size, color, angle, wordSpacing }) {
   const codes = writer.encode(text)
   if (!codes) return isSpace(text)
 
@@ -290,7 +293,7 @@ export function pushNativeText(pdfLibPage, writer, { text, x, y, size, color, an
     PDFOperator.of(Ops.NonStrokingColorRgb, [num(color.red), num(color.green), num(color.blue)]),
     PDFOperator.of(Ops.SetFontAndSize, [writer.name, num(size)]),
     PDFOperator.of(Ops.SetTextMatrix, [num(cos), num(sin), num(-sin), num(cos), num(x), num(y)]),
-    showText(pdfLibPage, writer, codes, size),
+    showText(pdfLibPage, writer, codes, size, wordSpacing),
     PDFOperator.of(Ops.EndText),
     PDFOperator.of(Ops.PopGraphicsState),
   )
@@ -305,8 +308,8 @@ export function pushNativeText(pdfLibPage, writer, { text, x, y, size, color, an
  * two-byte codes most modern PDFs use. An adjusted show, which shifts the
  * pen between pieces of the string, works for either kind.
  */
-function showText(pdfLibPage, writer, codes, size) {
-  const extra = writer.wordSpacingAt?.(size) || 0
+function showText(pdfLibPage, writer, codes, size, override) {
+  const extra = override ?? (writer.wordSpacingAt?.(size) || 0)
   const spaceCode = writer.spaceCode
   if (!extra || spaceCode === null || spaceCode === undefined) {
     return PDFOperator.of(Ops.ShowText, [PDFHexString.of(writer.hex(codes))])

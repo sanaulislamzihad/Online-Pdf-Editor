@@ -41,7 +41,8 @@ export default function PageCanvas({
         if (!sampledRef.current) {
           sampledRef.current = true
           const sampled = sampleColors(pageData.page, pageData.runs, canvas, vp, dpr)
-          onRunsReady?.(pageData.index, finishRuns(pageData.page, sampled))
+          const done = finishRuns(pageData.page, sampled)
+          onRunsReady?.(pageData.index, done)
         }
         setViewport(vp)
       },
@@ -123,6 +124,8 @@ let measuringContext = null
 function fitToRun(run, viewport) {
   if (fitCache.has(run.id)) return fitCache.get(run.id)
   const fit = { scaleX: 1, wordSpacing: 0 }
+  // a paragraph sets its own lines; there is no single width to match here
+  if (run.paragraph) { fitCache.set(run.id, fit); return fit }
   const target = Math.abs(run.width) * viewport.scale
 
   if (target > 1 && run.text.trim()) {
@@ -242,7 +245,8 @@ function RunLayer({
           if (e.key === 'Escape') { e.currentTarget.blur(); onSelect(null) }
         }}
         className={[
-          'cursor-text whitespace-pre outline-none',
+          'cursor-text outline-none',
+          run.paragraph ? 'whitespace-pre-wrap' : 'whitespace-pre',
           selected
             ? run.scrambled ? 'ring-2 ring-amber-500' : 'ring-2 ring-blue-500'
             : run.scrambled
@@ -260,8 +264,11 @@ function RunLayer({
           ].filter(Boolean).join(' ') || undefined,
           transformOrigin: 'left top',
           minWidth: `${Math.max(10, box.width)}px`,
-          height: `${fontPx * 1.2}px`,
-          lineHeight: `${fontPx}px`,
+          width: run.paragraph ? `${box.width}px` : undefined,
+          textIndent: run.paragraph ? `${box.indent}px` : undefined,
+          textAlign: run.paragraph?.justified ? 'justify' : undefined,
+          height: run.paragraph ? `${box.coverHeight}px` : `${fontPx * 1.2}px`,
+          lineHeight: `${run.paragraph ? box.lineHeight : fontPx}px`,
           fontSize: `${fontPx}px`,
           fontFamily: run.fontFamily,
           fontWeight: bold ? 700 : 400,
