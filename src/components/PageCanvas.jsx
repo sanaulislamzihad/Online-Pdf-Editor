@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { renderPageToCanvas, sampleColors, runToScreenBox } from '../lib/extract'
+import { startPageRender, sampleColors, runToScreenBox } from '../lib/extract.js'
+import { coverRect } from '../lib/plateBuild.js'
 
 export default function PageCanvas({
   pageData,
   zoom,
   edits,
   selectedId,
+  plate,
+  plateReady,
   onSelect,
   onEditRun,
   onColorsSampled,
@@ -17,18 +20,24 @@ export default function PageCanvas({
   useEffect(() => {
     let cancelled = false
     const canvas = canvasRef.current
-    if (!canvas) return
-    ;(async () => {
-      const { viewport: vp, dpr } = await renderPageToCanvas(pageData.page, canvas, zoom)
-      if (cancelled) return
-      if (!sampledRef.current) {
-        sampledRef.current = true
-        sampleColors(pageData.runs, canvas, vp, dpr)
-        onColorsSampled?.(pageData.index)
-      }
-      setViewport(vp)
-    })()
-    return () => { cancelled = true }
+    if (!canvas) return undefined
+
+    const { task, viewport: vp, dpr } = startPageRender(pageData.page, canvas, zoom)
+    task.promise.then(
+      () => {
+        if (cancelled) return
+        if (!sampledRef.current) {
+          sampledRef.current = true
+          sampleColors(pageData.runs, canvas, vp, dpr)
+          onColorsSampled?.(pageData.index)
+        }
+        setViewport(vp)
+      },
+      (err) => {
+        if (err?.name !== 'RenderingCancelledException') console.error(err)
+      },
+    )
+    return () => { cancelled = true; task.cancel() }
   }, [pageData, zoom])
 
   return (
@@ -40,9 +49,12 @@ export default function PageCanvas({
             <RunLayer
               key={run.id}
               run={run}
+              pageIndex={pageData.index}
               viewport={viewport}
               edit={edits[run.id]}
               selected={selectedId === run.id}
+              plate={plate}
+              plateReady={plateReady}
               onSelect={onSelect}
               onEditRun={onEditRun}
             />
@@ -53,8 +65,23 @@ export default function PageCanvas({
   )
 }
 
-function RunLayer({ run, viewport, edit, selected, onSelect, onEditRun }) {
+/** Map a PDF-space rectangle to a CSS box in the rendered page. */
+function screenRect(rect, viewport) {
+  const [x1, y1] = viewport.convertToViewportPoint(rect.x, rect.y + rect.h)
+  const [x2, y2] = viewport.convertToViewportPoint(rect.x + rect.w, rect.y)
+  return {
+    left: Math.min(x1, x2),
+    top: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
+  }
+}
+
+function RunLayer({
+  run, pageIndex, viewport, edit, selected, plate, plateReady, onSelect, onEditRun,
+}) {
   const ref = useRef(null)
+  const coverRef = useRef(null)
   const box = runToScreenBox(run, viewport)
   const touched = !!edit
   const deleted = !!edit?.deleted
@@ -66,6 +93,19 @@ function RunLayer({ run, viewport, edit, selected, onSelect, onEditRun }) {
   const dx = (edit?.dx ?? 0) * viewport.scale
   const dy = (edit?.dy ?? 0) * viewport.scale
   const fontPx = box.fontPx * (fontSize / run.fontSize)
+
+  // paint the erase patch with the real page background behind the text
+  useEffect(() => {
+    if (!touched || !plate || !plateReady) return
+    let cancelled = false
+    const rect = coverRect(run)
+    const cssBox = screenRect(rect, viewport)
+    plate.getPage(pageIndex).then((entry) => {
+      if (cancelled || !entry || !coverRef.current) return
+      plate.paintInto(entry, rect, coverRef.current, cssBox.width, cssBox.height)
+    })
+    return () => { cancelled = true }
+  }, [touched, plate, plateReady, run, viewport, pageIndex])
 
   // the element owns its own text (contentEditable); only push updates in
   // when the user is not typing into it, otherwise the caret jumps
@@ -84,24 +124,20 @@ function RunLayer({ run, viewport, edit, selected, onSelect, onEditRun }) {
     }
   }, [selected])
 
-  const common = {
-    position: 'absolute',
-    left: `${box.left + dx}px`,
-    transform: box.angleDeg ? `rotate(${box.angleDeg}deg)` : undefined,
-    transformOrigin: 'left bottom',
-  }
-  const coverWidth = Math.max(box.width, box.width * (fontSize / run.fontSize)) + fontPx * 0.3
+  const cssCover = screenRect(coverRect(run), viewport)
 
   return (
     <>
       {touched && (
-        <div
+        <canvas
+          ref={coverRef}
           style={{
-            ...common,
-            top: `${box.coverTop}px`,
-            width: `${coverWidth}px`,
-            height: `${box.coverHeight}px`,
-            background: run.bg,
+            position: 'absolute',
+            left: `${cssCover.left}px`,
+            top: `${cssCover.top}px`,
+            width: `${cssCover.width}px`,
+            height: `${cssCover.height}px`,
+            background: plateReady ? undefined : run.bg,
             pointerEvents: 'none',
           }}
         />
@@ -122,12 +158,15 @@ function RunLayer({ run, viewport, edit, selected, onSelect, onEditRun }) {
           'cursor-text whitespace-pre outline-none',
           selected
             ? 'ring-2 ring-blue-500'
-            : 'hover:ring-1 hover:ring-blue-400/70 hover:bg-blue-400/5',
-          deleted ? 'ring-1 ring-dashed ring-rose-400/70' : '',
+            : 'hover:bg-blue-400/10 hover:ring-1 hover:ring-blue-400/70',
+          deleted ? 'ring-1 ring-rose-400/70' : '',
         ].join(' ')}
         style={{
-          ...common,
+          position: 'absolute',
+          left: `${box.left + dx}px`,
           top: `${box.top - dy}px`,
+          transform: box.angleDeg ? `rotate(${box.angleDeg}deg)` : undefined,
+          transformOrigin: 'left top',
           minWidth: `${Math.max(10, box.width)}px`,
           height: `${fontPx * 1.2}px`,
           lineHeight: `${fontPx}px`,

@@ -1,4 +1,4 @@
-import { pdfjsLib, Util } from './pdfjs'
+import { pdfjsLib, Util } from './pdfjs.js'
 
 /**
  * Load a PDF from an ArrayBuffer. The buffer is cloned because pdf.js
@@ -15,8 +15,12 @@ export async function loadPdf(arrayBuffer) {
   return task.promise
 }
 
-/** Render one page into a canvas at the given CSS scale. */
-export async function renderPageToCanvas(page, canvas, scale) {
+/**
+ * Start rendering one page into a canvas at the given CSS scale. The caller
+ * gets the live task back so it can cancel it - React runs effects twice in
+ * development, and pdf.js refuses two concurrent renders on one canvas.
+ */
+export function startPageRender(page, canvas, scale) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
   const viewport = page.getViewport({ scale: scale * dpr })
   const cssViewport = page.getViewport({ scale })
@@ -28,8 +32,7 @@ export async function renderPageToCanvas(page, canvas, scale) {
 
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   const task = page.render({ canvasContext: ctx, viewport, background: '#ffffff' })
-  await task.promise
-  return { viewport: cssViewport, dpr }
+  return { task, viewport: cssViewport, dpr }
 }
 
 function fontInfoFor(page, fontName) {

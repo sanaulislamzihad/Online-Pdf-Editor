@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { loadPdf, extractRuns } from './lib/extract'
-import { exportPdf } from './lib/export'
+import { loadPdf, extractRuns } from './lib/extract.js'
+import { exportPdf } from './lib/export.js'
+import { PlateStore } from './lib/plate.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
 
@@ -12,7 +13,9 @@ export default function App() {
   const [zoom, setZoom] = useState(1.3)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  const [plateReady, setPlateReady] = useState(false)
   const bytesRef = useRef(null)
+  const plateRef = useRef(null)
   const historyRef = useRef([])
   const inputRef = useRef(null)
 
@@ -43,10 +46,17 @@ export default function App() {
       }
       setPages(next)
       setEdits({})
+      setPlateReady(false)
       historyRef.current = []
       setSelectedId(null)
       setFileName(file.name)
       setStatus(`${doc.numPages} page(s), ${next.reduce((n, p) => n + p.runs.length, 0)} editable text blocks`)
+
+      // build the text-free background plate in the background; edits can
+      // start immediately and the patches sharpen once it is ready
+      const plate = new PlateStore()
+      plateRef.current = plate
+      plate.load(buf).then((ok) => setPlateReady(ok))
     } catch (err) {
       console.error(err)
       setStatus(`Could not open this PDF: ${err.message}`)
@@ -124,10 +134,11 @@ export default function App() {
       for (const [id, edit] of Object.entries(edits)) {
         if (!isPristine(edit, runById.get(id))) dirty[id] = edit
       }
-      const bytes = await exportPdf({
+      const { bytes, warnings } = await exportPdf({
         originalBytes: bytesRef.current,
         pages,
         edits: dirty,
+        plate: plateRef.current,
         onProgress: setStatus,
       })
       const blob = new Blob([bytes], { type: 'application/pdf' })
@@ -137,7 +148,7 @@ export default function App() {
       a.download = fileName.replace(/\.pdf$/i, '') + '-edited.pdf'
       a.click()
       setTimeout(() => URL.revokeObjectURL(url), 4000)
-      setStatus('Saved.')
+      setStatus(warnings.length ? `Saved. ${warnings[0]}` : 'Saved.')
     } catch (err) {
       console.error(err)
       setStatus(`Export failed: ${err.message}`)
@@ -209,6 +220,8 @@ export default function App() {
                   zoom={zoom}
                   edits={edits}
                   selectedId={selectedId}
+                  plate={plateRef.current}
+                  plateReady={plateReady}
                   onSelect={selectRun}
                   onEditRun={editRun}
                   onColorsSampled={() => setPages((cur) => [...cur])}

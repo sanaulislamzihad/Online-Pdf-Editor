@@ -208,7 +208,9 @@ export function hideShowOps(bytes, ops) {
   for (const op of sorted) {
     if (op.start < cursor) continue // overlapping range, already handled
     chunks.push(bytes.subarray(cursor, op.start))
-    chunks.push(enc.encode(' 3 Tr '))
+    // modes 4-7 also add the glyphs to the clipping path; keep that effect
+    // by dropping to mode 7 (clip only) instead of 3 (draw nothing at all)
+    chunks.push(enc.encode(op.renderMode >= 4 ? ' 7 Tr ' : ' 3 Tr '))
     chunks.push(bytes.subarray(op.start, op.end))
     chunks.push(enc.encode(` ${op.renderMode} Tr `))
     cursor = op.end
