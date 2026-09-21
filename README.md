@@ -26,7 +26,11 @@ because the widths come from the font the page was laid out with; a line
 whose font cannot be measured that precisely is left whole rather than split
 at a guessed position.
 
-While a line is being edited the browser is asked for the document's own
+While a line is being edited it is shown in the very face the page was drawn
+with: pdf.js has already loaded each embedded font into the browser, so the
+overlay asks for that first and anything it has no glyph for falls through to
+the next name by itself - the same thing the export does. Failing that, the
+browser is asked for the document's own
 typeface by name, and where it is not installed the substitute is measured
 against the original and stretched to match, so the text does not jump
 larger the moment it becomes editable.

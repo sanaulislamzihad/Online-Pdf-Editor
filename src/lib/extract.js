@@ -1,5 +1,6 @@
 import { pdfjsLib, Util } from './pdfjs.js'
 import { textWidthIn } from './nativeText.js'
+import fontkit from '@pdf-lib/fontkit'
 
 /**
  * Load a PDF from an ArrayBuffer. The buffer is cloned because pdf.js
@@ -39,6 +40,34 @@ export function startPageRender(page, canvas, scale) {
   return { task, viewport: cssViewport, dpr }
 }
 
+// parsing a font is not free, and a page uses each of its own many times
+const metricsCache = new Map()
+
+/**
+ * Weight and slant as the font file states them.
+ *
+ * Reading them off the name misses as much as it catches - "Kp-Medium" is a
+ * bold face, "Arial-BoldMT" is obvious, plenty of others say nothing at all.
+ * The OS/2 table and the italic angle are what the font itself claims.
+ */
+function metricsOf(fontName, data) {
+  if (metricsCache.has(fontName)) return metricsCache.get(fontName)
+  let metrics = null
+  try {
+    if (data?.length) {
+      const fk = fontkit.create(data)
+      metrics = {
+        weight: fk['OS/2']?.usWeightClass ?? null,
+        slanted: (fk.post?.italicAngle ?? 0) !== 0,
+      }
+    }
+  } catch {
+    metrics = null
+  }
+  metricsCache.set(fontName, metrics)
+  return metrics
+}
+
 function fontInfoFor(page, fontName) {
   let obj = null
   try {
@@ -50,8 +79,17 @@ function fontInfoFor(page, fontName) {
   // strip subset prefixes like "ABCDEF+"
   const clean = raw.replace(/^[A-Z]{6}\+/, '')
   const lower = clean.toLowerCase()
-  const bold = /bold|black|heavy|semibold|demi/.test(lower)
-  const italic = /italic|oblique/.test(lower)
+  // "MinionPro-It" and "Arial-BoldMT" abbreviate the style after the dash
+  const tail = lower.split('-').slice(1).join('-')
+  const boldByName = /bold|black|heavy|semibold|demi/.test(lower) || tail.startsWith('bd')
+  const italicByName = /italic|oblique/.test(lower) ||
+    tail.endsWith('it') || tail.endsWith('ita') || tail.endsWith('obl')
+  const metrics = metricsOf(fontName, obj?.data)
+  // the name and the file each miss cases the other catches: "Kp-Medium"
+  // says nothing while its weight class does, and a CFF face rebuilt by
+  // pdf.js reports 400 however bold the original was
+  const bold = boldByName || (metrics?.weight ?? 0) >= 600
+  const italic = italicByName || !!metrics?.slanted
 
   // the name is a better signal than the descriptor's serif flag, which
   // word processors set carelessly
@@ -69,15 +107,16 @@ function fontInfoFor(page, fontName) {
     serif: '"Times New Roman", Times, serif',
     mono: '"Courier New", Courier, monospace',
   }
-  // ask for the document's own face first: a reader editing a Word file
-  // usually has Calibri, and then what is typed looks exactly like the line
-  // it replaces rather than a wider, taller stand-in
+  // The face pdf.js built to draw this page with is already loaded in the
+  // browser under its internal name, so ask for that first and the editor
+  // shows the document's actual typeface - not an approximation of it.
+  // Anything it has no glyph for falls through to the next name by itself,
+  // which is exactly what happens on export too.
   const base = clean.split(/[-,]/)[0].replace(/(MT|PS|Std|Pro)$/i, '').trim()
   const spaced = base.replace(/([a-z])([A-Z])/g, '$1 $2')
-  const family = base.length > 2
-    ? `"${base}", "${spaced}", ${CSS[kind]}`
-    : CSS[kind]
-  return { rawName: clean, kind, family, bold, italic }
+  const named = base.length > 2 ? `"${base}", "${spaced}", ` : ''
+  const embedded = fontName ? `"${fontName}", ` : ''
+  return { rawName: clean, kind, family: `${embedded}${named}${CSS[kind]}`, bold, italic }
 }
 
 /**
