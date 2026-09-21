@@ -1,3 +1,5 @@
+import { textRewritten } from '../lib/edits.js'
+
 const SWATCHES = ['#000000', '#374151', '#6b7280', '#b91c1c', '#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#ffffff']
 
 export default function Inspector({ run, edit, onEdit, onReset }) {
@@ -20,6 +22,10 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
   const bold = edit?.bold ?? run.bold
   const italic = edit?.italic ?? run.italic
   const deleted = !!edit?.deleted
+  // a line whose characters came out of the PDF wrong can only be deleted or
+  // retyped: restyling it would redraw the mojibake we read
+  const retyped = textRewritten(edit, run)
+  const locked = run.scrambled && !retyped
 
   const nudge = (ddx, ddy) => onEdit({ dx: (edit?.dx ?? 0) + ddx, dy: (edit?.dy ?? 0) + ddy })
 
@@ -31,8 +37,25 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
         <p className="mt-0.5 truncate text-[11px] text-slate-400" title={run.fontRawName}>{run.fontRawName}</p>
       </div>
 
-      <Field label="Font size">
-        <div className="flex items-center gap-1">
+      {locked && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2.5 text-[12px] leading-relaxed text-amber-900">
+          <p className="font-semibold">This line cannot be read back</p>
+          <p className="mt-1">
+            The PDF does not say what some of these glyphs are, so the text above is
+            not what the page shows. Type the line again to replace it; styling it as
+            it stands would print the wrong characters.
+          </p>
+          <button
+            onClick={() => onEdit({ text: '' })}
+            className="mt-2 w-full rounded border border-amber-400 bg-white px-2 py-1.5 font-medium hover:bg-amber-100"
+          >
+            Clear and retype
+          </button>
+        </div>
+      )}
+
+      <Field label="Font size" disabled={locked}>
+        <div className={`flex items-center gap-1 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
           <button onClick={() => onEdit({ fontSize: Math.max(2, +(size - 0.5).toFixed(1)) })} className="h-8 w-8 rounded border border-slate-300 hover:bg-slate-50">−</button>
           <input
             type="number"
@@ -45,15 +68,15 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
         </div>
       </Field>
 
-      <Field label="Style">
-        <div className="flex gap-1.5">
+      <Field label="Style" disabled={locked}>
+        <div className={`flex gap-1.5 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
           <Toggle active={bold} onClick={() => onEdit({ bold: !bold })}><b>B</b></Toggle>
           <Toggle active={italic} onClick={() => onEdit({ italic: !italic })}><i>I</i></Toggle>
         </div>
       </Field>
 
-      <Field label="Colour">
-        <div className="flex items-center gap-2">
+      <Field label="Colour" disabled={locked}>
+        <div className={`flex items-center gap-2 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
           <input
             type="color"
             value={color}
@@ -62,7 +85,7 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
           />
           <span className="text-xs uppercase tabular-nums text-slate-500">{color}</span>
         </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className={`mt-2 flex flex-wrap gap-1.5 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
           {SWATCHES.map((c) => (
             <button
               key={c}
@@ -75,8 +98,8 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
         </div>
       </Field>
 
-      <Field label="Position">
-        <div className="grid w-[104px] grid-cols-3 gap-1">
+      <Field label="Position" disabled={locked}>
+        <div className={`grid w-[104px] grid-cols-3 gap-1 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
           <span />
           <button onClick={() => nudge(0, 1)} className="h-8 rounded border border-slate-300 hover:bg-slate-50">↑</button>
           <span />
@@ -104,10 +127,10 @@ export default function Inspector({ run, edit, onEdit, onReset }) {
   )
 }
 
-function Field({ label, children }) {
+function Field({ label, children, disabled }) {
   return (
     <div>
-      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mb-1.5 text-xs font-semibold uppercase tracking-wide ${disabled ? 'text-slate-300' : 'text-slate-400'}`}>{label}</p>
       {children}
     </div>
   )

@@ -3,6 +3,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { coverRect } from './plateBuild.js'
 import { fontChain, assignFonts } from './fonts.js'
 import { pushNativeText } from './nativeText.js'
+import { textRewritten } from './edits.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -92,6 +93,13 @@ export async function exportPdf({ originalBytes, pages, edits, plate, onProgress
     for (const run of p.runs) {
       const edit = edits[run.id]
       if (!edit) continue
+      // text that came out of the file as mojibake cannot be written back;
+      // restyling it would replace the line with boxes, so leave it alone
+      // unless it is being deleted or has been retyped from scratch
+      if (run.scrambled && !edit.deleted && !textRewritten(edit, run)) {
+        warn(`"${run.text.slice(0, 18)}" could not be read from the PDF properly, so it was left untouched.`)
+        continue
+      }
       if (!byPage.has(p.index)) byPage.set(p.index, [])
       byPage.get(p.index).push({ run, edit })
     }

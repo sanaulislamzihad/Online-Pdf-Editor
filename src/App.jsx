@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadPdf, extractRuns } from './lib/extract.js'
 import { exportPdf } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
+import { hasChanges } from './lib/edits.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
 
@@ -77,17 +78,7 @@ export default function App() {
     })
   }, [pushHistory])
 
-  const isPristine = (edit, run) =>
-    edit &&
-    run &&
-    !edit.deleted &&
-    (edit.text === undefined || edit.text === run.text) &&
-    edit.fontSize === undefined &&
-    edit.color === undefined &&
-    edit.bold === undefined &&
-    edit.italic === undefined &&
-    !edit.dx &&
-    !edit.dy
+  const isPristine = (edit, run) => !!edit && !hasChanges(edit, run)
 
   const selectRun = useCallback((id) => {
     const prevId = selectedIdRef.current

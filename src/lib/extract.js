@@ -72,6 +72,65 @@ function fontInfoFor(page, fontName) {
 }
 
 /**
+ * Wait for the page's font objects to arrive.
+ *
+ * getOperatorList makes pdf.js request them, but each one only resolves once
+ * its web font has finished binding, which can land after the operator list
+ * does. Reading a run's font before then reports the internal id and no
+ * weight, slant or file.
+ */
+async function awaitFonts(page, items) {
+  const names = new Set()
+  for (const item of items) if (item.fontName) names.add(item.fontName)
+
+  const pending = [...names]
+    .filter((name) => !page.commonObjs.has(name))
+    .map((name) => new Promise((resolve) => {
+      try {
+        page.commonObjs.get(name, resolve)
+      } catch {
+        resolve()
+      }
+    }))
+  if (!pending.length) return
+
+  await Promise.race([
+    Promise.all(pending),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ])
+}
+
+// Bengali dependent vowel signs, and the code points pdf.js falls back to
+// when a glyph has no character behind it at all.
+const isMatra = (c) => (c >= 0x09be && c <= 0x09cc) || c === 0x09d7
+const isUnmapped = (c) => c === 0xfffd || (c >= 0xe000 && c <= 0xf8ff)
+const isBlank = (c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0xa0
+
+/**
+ * Does this run read as something we could never write back?
+ *
+ * A PDF stores shaped, reordered glyphs and maps them to characters through
+ * a ToUnicode table its producer wrote - one that routinely leaves conjuncts
+ * out and hands back vowel signs in the order they were painted rather than
+ * the order they are typed. Text like that is mojibake: it cannot be
+ * re-encoded, so the editor has to know never to redraw it.
+ */
+export function looksScrambled(text) {
+  let previous = -1
+  for (const ch of text) {
+    const c = ch.codePointAt(0)
+    if (isUnmapped(c)) return true
+    // a vowel sign has to follow a consonant: a leading or doubled one means
+    // the glyphs came back in the order they were drawn
+    if (isMatra(c) && (previous < 0 || isMatra(previous) || isBlank(previous))) {
+      return true
+    }
+    previous = c
+  }
+  return false
+}
+
+/**
  * Extract every text run of a page, in PDF user space (y grows upward).
  * Each run keeps the exact baseline origin, size, rotation and run width
  * of the original so it can be reproduced or hidden byte-for-byte later.
@@ -90,6 +149,7 @@ export async function extractRuns(page, pageIndex) {
     includeMarkedContent: false,
     disableCombineTextItems: true,
   })
+  await awaitFonts(page, content.items)
 
   const runs = []
   let opIndex = -1
@@ -120,6 +180,8 @@ export async function extractRuns(page, pageIndex) {
       fontKind: info.kind,
       bold: info.bold,
       italic: info.italic,
+      // text we cannot faithfully re-encode; editing it means retyping it
+      scrambled: looksScrambled(item.str),
       color: '#000000',
       bg: '#ffffff',
     })

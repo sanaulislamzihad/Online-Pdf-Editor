@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { startPageRender, sampleColors, runToScreenBox } from '../lib/extract.js'
 import { coverRect } from '../lib/plateBuild.js'
+import { hasChanges } from '../lib/edits.js'
 
 export default function PageCanvas({
   pageData,
@@ -83,7 +84,9 @@ function RunLayer({
   const ref = useRef(null)
   const coverRef = useRef(null)
   const box = runToScreenBox(run, viewport)
-  const touched = !!edit
+  // selecting a run must not disturb the page: the original pixels stay
+  // until an actual change is made
+  const touched = hasChanges(edit, run)
   const deleted = !!edit?.deleted
   const text = deleted ? '' : edit?.text ?? run.text
   const fontSize = edit?.fontSize ?? run.fontSize
@@ -157,8 +160,10 @@ function RunLayer({
         className={[
           'cursor-text whitespace-pre outline-none',
           selected
-            ? 'ring-2 ring-blue-500'
-            : 'hover:bg-blue-400/10 hover:ring-1 hover:ring-blue-400/70',
+            ? run.scrambled ? 'ring-2 ring-amber-500' : 'ring-2 ring-blue-500'
+            : run.scrambled
+              ? 'hover:bg-amber-400/10 hover:ring-1 hover:ring-amber-400/80'
+              : 'hover:bg-blue-400/10 hover:ring-1 hover:ring-blue-400/70',
           deleted ? 'ring-1 ring-rose-400/70' : '',
         ].join(' ')}
         style={{
