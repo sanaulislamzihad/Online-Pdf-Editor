@@ -1,4 +1,5 @@
 import { pdfjsLib, Util } from './pdfjs.js'
+import { textWidthIn } from './nativeText.js'
 
 /**
  * Load a PDF from an ArrayBuffer. The buffer is cloned because pdf.js
@@ -68,7 +69,15 @@ function fontInfoFor(page, fontName) {
     serif: '"Times New Roman", Times, serif',
     mono: '"Courier New", Courier, monospace',
   }
-  return { rawName: clean, kind, family: CSS[kind], bold, italic }
+  // ask for the document's own face first: a reader editing a Word file
+  // usually has Calibri, and then what is typed looks exactly like the line
+  // it replaces rather than a wider, taller stand-in
+  const base = clean.split(/[-,]/)[0].replace(/(MT|PS|Std|Pro)$/i, '').trim()
+  const spaced = base.replace(/([a-z])([A-Z])/g, '$1 $2')
+  const family = base.length > 2
+    ? `"${base}", "${spaced}", ${CSS[kind]}`
+    : CSS[kind]
+  return { rawName: clean, kind, family, bold, italic }
 }
 
 /**
@@ -143,6 +152,99 @@ export function looksScrambled(text) {
 }
 
 /**
+ * Can these two runs be treated as one piece of writing?
+ *
+ * pdf.js reports text in the pieces the file happens to draw it in, which for
+ * a justified or kerned line can be a fragment per word. Editing one of those
+ * means replacing a word and watching it run into its neighbours, so pieces
+ * that share a baseline, a font and a size are joined back into the sentence
+ * they came from.
+ */
+function joins(a, b) {
+  if (a.fontName !== b.fontName || a.pageIndex !== b.pageIndex) return false
+  if (Math.abs(a.angle - b.angle) > 0.01) return false
+  if (Math.abs(a.fontSize - b.fontSize) > a.fontSize * 0.06) return false
+  if (Math.abs(a.y - b.y) > a.fontSize * 0.2) return false
+
+  const gap = b.x - (a.x + a.width)
+  // a small overlap is normal kerning; a gap wider than a couple of spaces
+  // means a column, not a sentence
+  return gap > -a.fontSize * 0.4 && gap < a.fontSize * 1.2
+}
+
+function mergeRuns(runs) {
+  const merged = []
+  for (const run of runs) {
+    const last = merged[merged.length - 1]
+    if (!last || !joins(last, run)) {
+      merged.push({ ...run })
+      continue
+    }
+    const gap = run.x - (last.x + last.width)
+    const alreadySpaced = last.text.length !== last.text.trimEnd().length ||
+      run.text.length !== run.text.trimStart().length
+    const spaced = gap > last.fontSize * 0.12 && !alreadySpaced
+    last.text += (spaced ? ' ' : '') + run.text
+    last.width = run.x + run.width - last.x
+    last.scrambled = looksScrambled(last.text)
+  }
+  return merged
+}
+
+const SENTENCE_END = new Set(['.', '?', '!', String.fromCharCode(0x0964)])
+
+/**
+ * Cut a line into the sentences it contains.
+ *
+ * A whole paragraph line is an awkward thing to edit - a word changed in the
+ * first sentence pushes the rest of the line around. Splitting at full stops
+ * gives a box per sentence, each one landing exactly where it does on the
+ * page, since the widths come from the font the page was laid out with. A
+ * line whose font cannot be measured that precisely is left alone rather
+ * than split at a guessed position.
+ */
+function splitSentences(run, fontObj) {
+  if (run.text.trim().length < 30) return [run]
+
+  const parts = []
+  let from = 0
+  const chars = [...run.text]
+  for (let i = 0; i < chars.length - 1; i += 1) {
+    if (!SENTENCE_END.has(chars[i])) continue
+    if (chars[i + 1] !== ' ') continue
+    const piece = chars.slice(from, i + 2).join('')
+    if (piece.trim().length < 4) continue
+    parts.push(piece)
+    from = i + 2
+  }
+  if (!parts.length) return [run]
+  const tail = chars.slice(from).join('')
+  if (tail.trim().length < 4) return [run]
+  parts.push(tail)
+
+  const out = []
+  let offset = 0
+  for (let i = 0; i < parts.length; i += 1) {
+    const width = textWidthIn(fontObj, parts[i], run.fontSize)
+    if (width === null) return [run] // cannot place the pieces exactly
+    out.push({
+      ...run,
+      id: `${run.id}s${i}`,
+      text: parts[i],
+      x: run.x + offset * Math.cos(run.angle),
+      y: run.y + offset * Math.sin(run.angle),
+      width,
+      scrambled: looksScrambled(parts[i]),
+    })
+    offset += width
+  }
+  // the measured pieces must add up to the line we started from
+  const total = out.reduce((n, piece) => n + piece.width, 0)
+  if (Math.abs(total - Math.abs(run.width)) > Math.abs(run.width) * 0.06) return [run]
+  return out
+}
+
+/**
  * Extract every text run of a page, in PDF user space (y grows upward).
  * Each run keeps the exact baseline origin, size, rotation and run width
  * of the original so it can be reproduced or hidden byte-for-byte later.
@@ -198,7 +300,14 @@ export async function extractRuns(page, pageIndex) {
       bg: '#ffffff',
     })
   }
-  return runs
+  const fontOf = (name) => {
+    try {
+      return page.commonObjs.has(name) ? page.commonObjs.get(name) : null
+    } catch {
+      return null
+    }
+  }
+  return mergeRuns(runs).flatMap((run) => splitSentences(run, fontOf(run.fontName)))
 }
 
 function toHex(r, g, b) {

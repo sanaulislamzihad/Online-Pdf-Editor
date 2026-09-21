@@ -113,6 +113,23 @@ function glyphTest(fontObj, fk, run) {
 }
 
 /**
+ * Width of `text` in this font, in points at `size`, or null when the font
+ * has no code for something in it. Exact: these are the widths the page
+ * itself was laid out with.
+ */
+export function textWidthIn(fontObj, text, size) {
+  const map = encodingMapFor(fontObj)
+  if (!map) return null
+  const codes = []
+  for (const ch of text) {
+    const code = map.get(ch)
+    if (code === undefined) return null
+    codes.push(code)
+  }
+  return widthOfCodes(fontObj, codes, size)
+}
+
+/**
  * Build a writer for a run, or null when the page's own font cannot be used
  * (no usable encoding, a Type 3 font, or an ambiguous resource).
  */

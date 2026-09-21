@@ -108,6 +108,37 @@ export default function PageCanvas({
   )
 }
 
+/**
+ * How much narrower or wider the browser draws this run than the page does.
+ *
+ * The document's own typeface is asked for first, but it is often not
+ * installed, and a stand-in at the same em size is a different width and
+ * weight - which is why an edited line used to jump larger the moment it
+ * became visible. Measuring the original text in whatever font the browser
+ * actually picked gives the correction that puts it back.
+ */
+const scaleCache = new Map()
+let measuringContext = null
+
+function fontScaleFor(run, viewport) {
+  if (scaleCache.has(run.id)) return scaleCache.get(run.id)
+  let scale = 1
+  const target = Math.abs(run.width) * viewport.scale
+  if (target > 1 && run.text.trim()) {
+    if (!measuringContext) {
+      measuringContext = document.createElement('canvas').getContext('2d')
+    }
+    const size = run.fontSize * viewport.scale
+    const style = run.italic ? 'italic ' : ''
+    const weight = run.bold ? '700 ' : '400 '
+    measuringContext.font = `${style}${weight}${size}px ${run.fontFamily}`
+    const measured = measuringContext.measureText(run.text).width
+    if (measured > 1) scale = Math.min(2, Math.max(0.5, target / measured))
+  }
+  scaleCache.set(run.id, scale)
+  return scale
+}
+
 /** Map a PDF-space rectangle to a CSS box in the rendered page. */
 function screenRect(rect, viewport) {
   const [x1, y1] = viewport.convertToViewportPoint(rect.x, rect.y + rect.h)
@@ -138,6 +169,7 @@ function RunLayer({
   const dx = (edit?.dx ?? 0) * viewport.scale
   const dy = (edit?.dy ?? 0) * viewport.scale
   const fontPx = box.fontPx * (fontSize / run.fontSize)
+  const stretch = fontScaleFor(run, viewport)
 
   // paint the erase patch with the real page background behind the text
   useEffect(() => {
@@ -212,7 +244,10 @@ function RunLayer({
           position: 'absolute',
           left: `${box.left + dx}px`,
           top: `${box.top - dy}px`,
-          transform: box.angleDeg ? `rotate(${box.angleDeg}deg)` : undefined,
+          transform: [
+            box.angleDeg ? `rotate(${box.angleDeg}deg)` : '',
+            Math.abs(stretch - 1) > 0.02 ? `scaleX(${stretch.toFixed(4)})` : '',
+          ].filter(Boolean).join(' ') || undefined,
           transformOrigin: 'left top',
           minWidth: `${Math.max(10, box.width)}px`,
           height: `${fontPx * 1.2}px`,

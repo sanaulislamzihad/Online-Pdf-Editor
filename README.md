@@ -18,6 +18,19 @@ npm run build      # static site in dist/ - host it anywhere
 
 ## What you can do to a line
 
+A line is offered as the sentences it contains. PDFs report text in whatever
+pieces they happen to draw it in - sometimes a fragment per word - so those
+are joined back together when they share a baseline, a font and a size, then
+cut again at full stops. Each piece sits exactly where it does on the page,
+because the widths come from the font the page was laid out with; a line
+whose font cannot be measured that precisely is left whole rather than split
+at a guessed position.
+
+While a line is being edited the browser is asked for the document's own
+typeface by name, and where it is not installed the substitute is measured
+against the original and stretched to match, so the text does not jump
+larger the moment it becomes editable.
+
 Click it and it becomes editable where it sits. The panel on the right changes
 font size, colour, bold and italic, nudges the line a point at a time, deletes
 it, or resets it to the original. `Ctrl`+`Z` undoes, `Del` removes the selected
