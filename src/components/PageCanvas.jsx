@@ -13,6 +13,9 @@ export default function PageCanvas({
   plateReady,
   images,
   imageEdits,
+  scanned,
+  ocrBusy,
+  onRunOcr,
   selectedImageId,
   imagePlate,
   imagePlateReady,
@@ -52,6 +55,22 @@ export default function PageCanvas({
   return (
     <div className="relative mx-auto bg-white shadow-lg ring-1 ring-black/10">
       <canvas ref={canvasRef} className="block" />
+
+      {scanned && (
+        <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-amber-100/95 px-3 py-2 text-[13px] text-amber-900 shadow">
+          <span className="flex-1">
+            This page is a picture of text, so there is nothing to select. Read it
+            first and the lines become editable.
+          </span>
+          <button
+            onClick={() => onRunOcr(pageData.index)}
+            disabled={ocrBusy}
+            className="shrink-0 rounded bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+          >
+            {ocrBusy ? 'Reading…' : 'Read this page'}
+          </button>
+        </div>
+      )}
       {viewport && (
         <div className="absolute inset-0">
           {/* images sit under the text layer, as they do on the page */}
@@ -122,7 +141,7 @@ function RunLayer({
 
   // paint the erase patch with the real page background behind the text
   useEffect(() => {
-    if (!touched || !plate || !plateReady) return
+    if (!touched || run.source === 'ocr' || !plate || !plateReady) return
     let cancelled = false
     const rect = coverRect(run)
     const cssBox = screenRect(rect, viewport)
@@ -163,7 +182,7 @@ function RunLayer({
             top: `${cssCover.top}px`,
             width: `${cssCover.width}px`,
             height: `${cssCover.height}px`,
-            background: plateReady ? undefined : run.bg,
+            background: plateReady && run.source !== 'ocr' ? undefined : run.bg,
             pointerEvents: 'none',
           }}
         />

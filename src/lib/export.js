@@ -191,6 +191,16 @@ export async function exportPdf({ originalBytes, pages, edits, images = [], imag
     // 1. erase: stamp the original background back over each edited line
     for (const { run } of items) {
       const rect = coverRect(run)
+
+      // recognised text is part of the picture of the page, so there is no
+      // text-free version of it to fall back on - paint over the paper
+      if (run.source === 'ocr') {
+        page.drawRectangle({
+          x: rect.x, y: rect.y, width: rect.w, height: rect.h, color: hexToRgb(run.bg),
+        })
+        continue
+      }
+
       let png = null
       try {
         png = plate ? await plate.patchPng(pageIndex, rect) : null

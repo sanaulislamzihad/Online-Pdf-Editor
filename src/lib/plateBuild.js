@@ -121,6 +121,17 @@ export async function buildPlateBytes(originalBytes, { hideText = true, dropImag
 
 /** Rectangle (PDF user space, y-up, origin = lower left) covering a run's ink. */
 export function coverRect(run) {
+  // a recognised line comes with the exact box the recogniser read it from
+  if (run.inkBox) {
+    const pad = run.fontSize * 0.1
+    return {
+      x: run.inkBox.x - pad,
+      y: run.inkBox.y - pad,
+      w: run.inkBox.w + pad * 2,
+      h: run.inkBox.h + pad * 2,
+    }
+  }
+
   const fs = run.fontSize
   const w = Math.abs(run.width) + fs * 0.14
   const h = fs * 1.26

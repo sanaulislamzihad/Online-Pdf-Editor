@@ -4,6 +4,7 @@ import { exportPdf } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
 import { hasChanges } from './lib/edits.js'
 import { extractImages, imageChanged } from './lib/images.js'
+import { OCR_LANGUAGES, looksScanned, recognisePage } from './lib/ocr.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
 
@@ -20,6 +21,8 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [plateReady, setPlateReady] = useState(false)
   const [imagePlateReady, setImagePlateReady] = useState(false)
+  const [language, setLanguage] = useState('eng')
+  const [ocrPage, setOcrPage] = useState(null)
   const bytesRef = useRef(null)
   const plateRef = useRef(null)
   const imagePlateRef = useRef(null)
@@ -117,6 +120,34 @@ export default function App() {
       return { ...prev, [id]: { ...(prev[id] || {}), ...patch } }
     })
   }, [snapshot, edits, ensureImagePlate])
+
+  const runOcr = useCallback(async (pageIndex) => {
+    const target = pages.find((p) => p.index === pageIndex)
+    if (!target || ocrPage !== null) return
+    setOcrPage(pageIndex)
+    setStatus('Loading the recognition model…')
+    try {
+      const found = await recognisePage({
+        page: target.page,
+        pageIndex,
+        language,
+        onProgress: setStatus,
+      })
+      setPages((prev) => prev.map((p) => (
+        p.index === pageIndex
+          ? { ...p, runs: [...p.runs, ...found], recognised: true }
+          : p
+      )))
+      setStatus(found.length
+        ? `Recognised ${found.length} line(s) on page ${pageIndex + 1}. They can be edited like any other text.`
+        : `No text could be recognised on page ${pageIndex + 1}.`)
+    } catch (err) {
+      console.error(err)
+      setStatus(`Text recognition failed: ${err.message}`)
+    } finally {
+      setOcrPage(null)
+    }
+  }, [pages, language, ocrPage])
 
   const isPristine = (edit, run) => !!edit && !hasChanges(edit, run)
 
@@ -250,6 +281,14 @@ export default function App() {
           <button onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.15).toFixed(2)))} className="h-8 w-8 rounded border border-slate-300 bg-white text-lg leading-none hover:bg-slate-50">−</button>
           <span className="w-14 text-center text-sm tabular-nums">{Math.round(zoom * 100)}%</span>
           <button onClick={() => setZoom((z) => Math.min(4, +(z + 0.15).toFixed(2)))} className="h-8 w-8 rounded border border-slate-300 bg-white text-lg leading-none hover:bg-slate-50">+</button>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            title="Language used when reading scanned pages"
+            className="ml-2 h-8 rounded border border-slate-300 bg-white px-2 text-sm"
+          >
+            {OCR_LANGUAGES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
           <button onClick={undo} className="ml-2 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm hover:bg-slate-50">Undo</button>
           <button
             onClick={download}
@@ -291,6 +330,11 @@ export default function App() {
                   selectedImageId={selectedImageId}
                   imagePlate={imagePlateRef.current}
                   imagePlateReady={imagePlateReady}
+                  scanned={
+                    !p.recognised && looksScanned(p.page, p.runs, images[p.index] || [])
+                  }
+                  ocrBusy={ocrPage === p.index}
+                  onRunOcr={runOcr}
                   onSelect={selectRun}
                   onSelectImage={selectImage}
                   onEditRun={editRun}

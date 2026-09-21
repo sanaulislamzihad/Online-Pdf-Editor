@@ -106,7 +106,7 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
   }
 
   // 1. the page's own font resource, when weight and slant are unchanged
-  if (bold === run.bold && italic === run.italic) {
+  if (run.fontName && bold === run.bold && italic === run.italic) {
     let obj = null
     try {
       obj = pdfjsPage.commonObjs.has(run.fontName) ? pdfjsPage.commonObjs.get(run.fontName) : null

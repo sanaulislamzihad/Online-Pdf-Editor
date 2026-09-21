@@ -33,6 +33,17 @@ its pixels are never decoded or re-encoded - only a replacement brings in new
 data. Images inside form XObjects, and pages drawn as one flat picture, are
 not offered for editing.
 
+## Scanned pages
+
+A page that is one big picture with no text objects gets a banner offering to
+read it. Recognition runs in the browser (Tesseract), in English, Bangla, or
+both - pick the language in the toolbar before reading. The first run
+downloads the language model from a CDN; the page image itself never leaves
+the machine. Each recognised line then edits like any other, with one
+difference: there is no text layer to peel back, so erasing one paints over
+it with the paper colour sampled from around it. That is invisible on a clean
+scan and can show as a patch on a heavily textured one.
+
 ## How it stays faithful to the original
 
 Nothing is re-rendered or rebuilt on export. The uploaded file is kept as-is
@@ -95,6 +106,8 @@ the editor and of the exported file land in `outDir`.
 | `src/lib/plate.js` | renders and caches plate pages, hands out slices |
 | `src/lib/nativeText.js` | writes text with the page's own font resource |
 | `src/lib/fonts.js` | picks a font per script run, with fallbacks |
+| `src/lib/images.js` | finds the images on a page and where they sit |
+| `src/lib/ocr.js` | reads the text off a scanned page |
 | `src/lib/export.js` | erases and redraws the edited lines, saves the file |
 
 Built with pdf.js (reading and rendering), pdf-lib (writing) and React.
