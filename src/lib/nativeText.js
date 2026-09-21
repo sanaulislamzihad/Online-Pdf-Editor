@@ -21,8 +21,19 @@ import {
 
 const isSpace = (text) => /^\s+$/.test(text)
 
+// building one of these walks the whole ToUnicode table, and callers ask for
+// it per character when measuring
+const encodingCache = new WeakMap()
+
 /** Unicode character -> the character code this font uses for it. */
 export function encodingMapFor(fontObj) {
+  if (fontObj && encodingCache.has(fontObj)) return encodingCache.get(fontObj)
+  const built = buildEncodingMap(fontObj)
+  if (fontObj) encodingCache.set(fontObj, built)
+  return built
+}
+
+function buildEncodingMap(fontObj) {
   const source = fontObj?.toUnicode?._map
   if (!source) return null
   const map = new Map()

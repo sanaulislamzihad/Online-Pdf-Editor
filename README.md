@@ -18,6 +18,13 @@ npm run build      # static site in dist/ - host it anywhere
 
 ## What you can do to a line
 
+A line is offered as the sentences it contains, and a link or a coloured word
+within one is offered separately - pdf.js reports a change of font or position
+as a new piece of text but not a change of colour, so where the ink changes
+part way through a line it is found by reading the drawn page character by
+character. Greys all count as one ink, since how dark a sample comes out says
+more about the glyph than its colour; a hue is what marks a link.
+
 A line is offered as the sentences it contains. PDFs report text in whatever
 pieces they happen to draw it in - sometimes a fragment per word - so those
 are joined back together when they share a baseline, a font and a size, then

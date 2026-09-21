@@ -427,7 +427,9 @@ export default function App() {
                   onSelectImage={selectImage}
                   onEditRun={editRun}
                   onEditImage={editImage}
-                  onColorsSampled={() => setPages((cur) => [...cur])}
+                  onRunsReady={(index, runs) => setPages((cur) => cur.map(
+                    (page) => (page.index === index ? { ...page, runs } : page),
+                  ))}
                 />
               ))}
             </div>

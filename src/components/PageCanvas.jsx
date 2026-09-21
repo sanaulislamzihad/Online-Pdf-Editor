@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { startPageRender, sampleColors, runToScreenBox } from '../lib/extract.js'
+import { startPageRender, sampleColors, runToScreenBox, finishRuns } from '../lib/extract.js'
 import { coverRect } from '../lib/plateBuild.js'
 import { hasChanges } from '../lib/edits.js'
 import ImageLayer from './ImageLayer.jsx'
@@ -23,7 +23,7 @@ export default function PageCanvas({
   onSelectImage,
   onEditRun,
   onEditImage,
-  onColorsSampled,
+  onRunsReady,
 }) {
   const canvasRef = useRef(null)
   const [viewport, setViewport] = useState(null)
@@ -40,8 +40,8 @@ export default function PageCanvas({
         if (cancelled) return
         if (!sampledRef.current) {
           sampledRef.current = true
-          sampleColors(pageData.runs, canvas, vp, dpr)
-          onColorsSampled?.(pageData.index)
+          const sampled = sampleColors(pageData.page, pageData.runs, canvas, vp, dpr)
+          onRunsReady?.(pageData.index, finishRuns(pageData.page, sampled))
         }
         setViewport(vp)
       },

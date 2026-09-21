@@ -327,7 +327,7 @@ function runsFromLines({ lines, viewport, pageIndex, toPage, idPrefix, canvas })
     })
   }
 
-  sampleColors(runs, canvas, viewport, 1)
+  sampleColors(null, runs, canvas, viewport, 1)
   return runs
 }
 
