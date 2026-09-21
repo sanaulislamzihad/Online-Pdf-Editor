@@ -84,18 +84,20 @@ function widthOfCodes(fontObj, codes, size) {
  *
  * A subset's ToUnicode table routinely describes the whole original encoding
  * while the font file itself only carries the handful of glyphs that were
- * printed, so a character code existing proves nothing. The rebuilt font from
- * pdf.js is checked instead; when it cannot be read, only characters the run
- * already displays are trusted.
+ * printed, so a character code existing proves nothing - the rebuilt font
+ * from pdf.js is checked instead. Anything the run already displays needs no
+ * checking at all: it was drawn, so the glyph is there. That also covers the
+ * private-use characters pdf.js falls back to for glyphs its table cannot
+ * name, which is what lets an unreadable line be written back untouched.
  */
 function glyphTest(fontObj, fk, run) {
   const toFontChar = fontObj.toFontChar || []
-  if (!fk) {
-    const known = new Set([...run.text])
-    return (ch) => known.has(ch)
-  }
+  const drawn = new Set([...run.text])
+  if (!fk) return (ch) => drawn.has(ch)
+
   const cache = new Map()
   return (ch, code) => {
+    if (drawn.has(ch)) return true
     if (cache.has(ch)) return cache.get(ch)
     let ok = false
     try {

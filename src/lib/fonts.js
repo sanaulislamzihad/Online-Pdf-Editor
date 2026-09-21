@@ -61,10 +61,18 @@ function parse(bytes) {
   }
 }
 
-/** Can this candidate draw every glyph of `text`? Shaped with the same
- *  engine pdf-lib uses when writing, so a pass here means no blank boxes. */
-function covers(cand, text) {
-  if (cand.native) return !COMPLEX_SCRIPT.test(text) && cand.native.covers(text)
+/**
+ * Can this candidate draw every glyph of `text`?
+ *
+ * Shaped with the same engine pdf-lib uses when writing, so a pass here means
+ * no blank boxes. `kept` marks text carried over untouched from the page: the
+ * page's own font wrote it once already, character code for character code,
+ * so writing it back is exact - shaping rules do not come into it. Newly
+ * typed text in a script that needs shaping does need a font with the tables
+ * to do it, since the original codes are in painting order.
+ */
+function covers(cand, text, kept) {
+  if (cand.native) return (kept || !COMPLEX_SCRIPT.test(text)) && cand.native.covers(text)
   if (!cand.fk) return WIN_ANSI.test(text)
   try {
     const glyphs = cand.fk.layout(text).glyphs
@@ -148,31 +156,76 @@ export async function fontChain({ pdfDoc, pdfLibPage, pdfjsPage, run, bold, ital
   return { chain }
 }
 
-/** Assign each script run the first font in the chain that can draw it. */
-export function assignFonts(text, chain) {
-  const parts = scriptRuns(text)
+/**
+ * Split an edited line into what was kept and what was typed.
+ *
+ * Everything outside the edit is still the document's own characters, and it
+ * matters that they stay so: a line the PDF describes badly - missing
+ * conjuncts, vowel signs in painting order - reads as mojibake but writes
+ * back perfectly through the font it came from. Only the span that actually
+ * changed needs a font chosen for it.
+ */
+function editedSpan(original, text) {
+  const before = [...original]
+  const after = [...text]
 
-  // the page's own font is all-or-nothing for a line: falling back on just
-  // the words whose glyphs are missing would leave one line in two typefaces
-  const ink = parts.filter((p) => p.cls !== 'space')
-  let usable = chain
-  if (chain[0]?.native && !ink.every((p) => covers(chain[0], p.text))) {
-    usable = chain.slice(1)
+  let start = 0
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1
+  }
+  let end = 0
+  while (
+    end < before.length - start &&
+    end < after.length - start &&
+    before[before.length - 1 - end] === after[after.length - 1 - end]
+  ) {
+    end += 1
   }
 
+  return [
+    { text: after.slice(0, start).join(''), kept: true },
+    { text: after.slice(start, after.length - end).join(''), kept: false },
+    { text: after.slice(after.length - end).join(''), kept: true },
+  ].filter((part) => part.text)
+}
+
+/**
+ * Work out which font draws each part of the line, keeping untouched text on
+ * the page's own font and giving anything newly typed a font that can shape
+ * it.
+ */
+export function planSegments({ original, text, chain }) {
   const segments = []
   const swapped = new Set()
   let unsupported = false
-  for (const part of parts) {
-    let chosen = usable.find((cand) => covers(cand, part.text))
-    if (!chosen) {
-      unsupported = true
-      chosen = usable[usable.length - 1]
+  let lost = false
+
+  for (const span of editedSpan(original ?? text, text)) {
+    const parts = scriptRuns(span.text)
+
+    // within newly typed text the page's own font is all-or-nothing: falling
+    // back on only the words whose glyphs are missing would leave one line
+    // set in two typefaces
+    let usable = chain
+    if (!span.kept && chain[0]?.native) {
+      const ink = parts.filter((part) => part.cls !== 'space')
+      if (!ink.every((part) => covers(chain[0], part.text, false))) usable = chain.slice(1)
     }
-    if (chosen.label && part.text.trim()) swapped.add(chosen.label)
-    const last = segments[segments.length - 1]
-    if (last && last.cand === chosen) last.text += part.text
-    else segments.push({ text: part.text, cand: chosen, native: chosen.native })
+
+    for (const part of parts) {
+      let chosen = usable.find((cand) => covers(cand, part.text, span.kept))
+      if (!chosen) {
+        unsupported = true
+        if (span.kept) lost = true
+        chosen = usable[usable.length - 1]
+      }
+      if (chosen.label && part.text.trim()) swapped.add(chosen.label)
+
+      const last = segments[segments.length - 1]
+      if (last && last.cand === chosen) last.text += part.text
+      else segments.push({ text: part.text, cand: chosen, native: chosen.native })
+    }
   }
-  return { segments, unsupported, swapped: [...swapped] }
+
+  return { segments, unsupported, lost, swapped: [...swapped] }
 }

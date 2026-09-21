@@ -1,4 +1,3 @@
-import { textRewritten } from '../lib/edits.js'
 import ImagePanel from './ImagePanel.jsx'
 
 const SWATCHES = ['#000000', '#374151', '#6b7280', '#b91c1c', '#c2410c', '#15803d', '#1d4ed8', '#7e22ce', '#ffffff']
@@ -37,10 +36,10 @@ export default function Inspector({
   const bold = edit?.bold ?? run.bold
   const italic = edit?.italic ?? run.italic
   const deleted = !!edit?.deleted
-  // a line whose characters came out of the PDF wrong can only be deleted or
-  // retyped: restyling it would redraw the mojibake we read
-  const retyped = textRewritten(edit, run)
-  const locked = run.scrambled && !retyped
+  // Characters the PDF does not describe properly still write back exactly,
+  // through the font they came from - but only while the line keeps that
+  // font, so changing weight or slant would drop them.
+  const fragile = !!run.scrambled
 
   const nudge = (ddx, ddy) => onEdit({ dx: (edit?.dx ?? 0) + ddx, dy: (edit?.dy ?? 0) + ddy })
 
@@ -48,27 +47,24 @@ export default function Inspector({
     <aside className="w-64 shrink-0 space-y-4 overflow-y-auto border-l border-slate-200 bg-white p-4">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Selected text</p>
-        {locked ? (
-          <p className="mt-1 text-sm italic text-slate-400">not readable</p>
-        ) : (
-          <p className="mt-1 truncate text-sm font-medium" title={run.text}>{run.text}</p>
-        )}
+        <p className="mt-1 truncate text-sm font-medium" title={run.text}>{run.text}</p>
         <p className="mt-0.5 truncate text-[11px] text-slate-400" title={run.fontRawName}>{run.fontRawName}</p>
       </div>
 
-      {locked && (
+      {fragile && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2.5 text-[12px] leading-relaxed text-amber-900">
-          <p className="font-semibold">This line cannot be read back</p>
+          <p className="font-semibold">Some characters here are not spelled out</p>
           <p className="mt-1">
-            The PDF does not say what some of these glyphs are, so the characters
-            behind this line are not the ones it shows. The box is empty on purpose:
-            type the line as you want it and the whole line is replaced.
+            The PDF does not say what a few of these glyphs are, so the text above
+            reads wrongly. Editing is still safe — whatever you do not touch is put
+            back exactly as it is now. Bold and italic are off, because they would
+            drop those characters.
           </p>
         </div>
       )}
 
-      <Field label="Font size" disabled={locked}>
-        <div className={`flex items-center gap-1 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
+      <Field label="Font size">
+        <div className="flex items-center gap-1">
           <button onClick={() => onEdit({ fontSize: Math.max(2, +(size - 0.5).toFixed(1)) })} className="h-8 w-8 rounded border border-slate-300 hover:bg-slate-50">−</button>
           <input
             type="number"
@@ -81,15 +77,15 @@ export default function Inspector({
         </div>
       </Field>
 
-      <Field label="Style" disabled={locked}>
-        <div className={`flex gap-1.5 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
+      <Field label="Style" disabled={fragile}>
+        <div className={`flex gap-1.5 ${fragile ? 'pointer-events-none opacity-40' : ''}`}>
           <Toggle active={bold} onClick={() => onEdit({ bold: !bold })}><b>B</b></Toggle>
           <Toggle active={italic} onClick={() => onEdit({ italic: !italic })}><i>I</i></Toggle>
         </div>
       </Field>
 
-      <Field label="Colour" disabled={locked}>
-        <div className={`flex items-center gap-2 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
+      <Field label="Colour">
+        <div className="flex items-center gap-2">
           <input
             type="color"
             value={color}
@@ -98,7 +94,7 @@ export default function Inspector({
           />
           <span className="text-xs uppercase tabular-nums text-slate-500">{color}</span>
         </div>
-        <div className={`mt-2 flex flex-wrap gap-1.5 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {SWATCHES.map((c) => (
             <button
               key={c}
@@ -111,8 +107,8 @@ export default function Inspector({
         </div>
       </Field>
 
-      <Field label="Position" disabled={locked}>
-        <div className={`grid w-[104px] grid-cols-3 gap-1 ${locked ? 'pointer-events-none opacity-40' : ''}`}>
+      <Field label="Position">
+        <div className="grid w-[104px] grid-cols-3 gap-1">
           <span />
           <button onClick={() => nudge(0, 1)} className="h-8 rounded border border-slate-300 hover:bg-slate-50">↑</button>
           <span />

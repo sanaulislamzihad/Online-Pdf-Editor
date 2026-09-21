@@ -153,17 +153,15 @@ function RunLayer({
   }, [touched, plate, plateReady, run, viewport, pageIndex])
 
   // the element owns its own text (contentEditable); only push updates in
-  // when the user is not typing into it, otherwise the caret jumps.
-  // A line we could not read back starts empty: typing into the mojibake
-  // would only mean writing the mojibake back out with the edit appended.
+  // when the user is not typing into it, otherwise the caret jumps
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const desired = touched ? text : (run.scrambled ? '' : run.text)
+    const desired = touched ? text : run.text
     if (el.textContent !== desired && document.activeElement !== el) {
       el.textContent = desired
     }
-  }, [text, touched, run.text, run.scrambled])
+  }, [text, touched, run.text])
 
   useEffect(() => {
     if (selected && ref.current && document.activeElement !== ref.current) {

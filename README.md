@@ -69,6 +69,14 @@ path is refused, rather than guessed at, when it cannot be trusted:
 - for Bengali, Devanagari, Arabic and other shaped scripts, whose text a PDF
   stores already shaped in visual order.
 
+Only the span that actually changed is given a font this way. Everything
+else on the line is still the document's own characters and is written back
+through the font it came from, code for code. That matters most where a PDF
+describes its text badly - Bengali files whose producer wrote the ToUnicode
+table in painting order read as mojibake and lose their conjuncts, yet the
+untouched parts of such a line still come back out exactly as they went in,
+so a word can be changed in the middle of one without damaging the rest.
+
 When it is refused the line is drawn with a built-in PDF font of the same
 class, or with the bundled Noto Sans Bengali for Bengali, and the status bar
 says which substitute was used. Weight and slant changes also take this path,

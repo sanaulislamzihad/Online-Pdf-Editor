@@ -5,9 +5,8 @@ import { currentRect, imageChanged } from './images.js'
 import { findXObjectOps, removeRanges } from './contentStream.js'
 import { pageContentBytes, setPageContent } from './pdfBytes.js'
 import { PDFName, PDFNumber, PDFOperator, PDFOperatorNames as ImgOps } from 'pdf-lib'
-import { fontChain, assignFonts } from './fonts.js'
+import { fontChain, planSegments } from './fonts.js'
 import { pushNativeText } from './nativeText.js'
-import { textRewritten } from './edits.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -154,13 +153,6 @@ export async function exportPdf({ originalBytes, pages, edits, images = [], imag
     for (const run of p.runs) {
       const edit = edits[run.id]
       if (!edit) continue
-      // text that came out of the file as mojibake cannot be written back;
-      // restyling it would replace the line with boxes, so leave it alone
-      // unless it is being deleted or has been retyped from scratch
-      if (run.scrambled && !edit.deleted && !textRewritten(edit, run)) {
-        warn(`"${run.text.slice(0, 18)}" could not be read from the PDF properly, so it was left untouched.`)
-        continue
-      }
       if (!byPage.has(p.index)) byPage.set(p.index, [])
       byPage.get(p.index).push({ run, edit })
     }
@@ -228,11 +220,17 @@ export async function exportPdf({ originalBytes, pages, edits, images = [], imag
       const { chain } = await fontChain({
         pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text, cache: fontCache,
       })
-      const { segments, unsupported, swapped } = assignFonts(text, chain)
+      const { segments, unsupported, lost, swapped } = planSegments({
+        original: run.text,
+        text,
+        chain,
+      })
       for (const seg of segments) {
         if (!seg.native) seg.font = await seg.cand.embed()
       }
-      if (swapped.length) {
+      if (lost) {
+        warn(`Part of “${run.text.slice(0, 18)}” is not described properly by the PDF and could not be kept.`)
+      } else if (swapped.length) {
         warn(`“${run.fontRawName}” cannot write some of the new text, so ${swapped[0]} was used for it.`)
       } else if (unsupported) {
         warn(`Some characters in “${text.slice(0, 20)}” have no glyph in any available font.`)
