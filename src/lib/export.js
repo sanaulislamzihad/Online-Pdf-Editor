@@ -133,6 +133,45 @@ async function applyImageEdits(pdfDoc, page, items, warn) {
 }
 
 /**
+ * Does this text need setting across more than the one line it is on?
+ *
+ * A paragraph always does. Anything else - a heading, a cell of a table -
+ * only once what has been typed no longer fits between where it starts and
+ * where the page's text ends, at which point running off the edge is the
+ * one thing it must not do.
+ */
+function shapeFor(run, text, pdfjsPage) {
+  if (run.paragraph) return run.paragraph
+  if (!run.wrap) return null
+
+  const available = run.wrap.right - run.x
+  if (available < run.fontSize * 4) return null
+
+  const fontObj = fontObjectFor(run, pdfjsPage)
+  const measure = measurerFor(run, fontObj)
+  if (!measure || measure.natural(text) <= available + 1) return null
+
+  return {
+    left: run.x,
+    indent: 0,
+    width: available,
+    drop: run.wrap.leading,
+    baselines: [run.y],
+    bottom: run.y - run.fontSize * 0.3,
+    justified: false,
+    probe: run,
+  }
+}
+
+function fontObjectFor(run, pdfjsPage) {
+  try {
+    return pdfjsPage.commonObjs.has(run.fontName) ? pdfjsPage.commonObjs.get(run.fontName) : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Set a paragraph again across its own lines.
  *
  * Its text is broken to the measure the page uses, each line placed on the
@@ -143,13 +182,7 @@ async function applyImageEdits(pdfDoc, page, items, warn) {
  */
 function drawParagraph(page, run, text, chain, pdfjsPage, style, warn) {
   const shape = run.paragraph
-  const fontObj = (() => {
-    try {
-      return pdfjsPage.commonObjs.has(run.fontName) ? pdfjsPage.commonObjs.get(run.fontName) : null
-    } catch {
-      return null
-    }
-  })()
+  const fontObj = fontObjectFor(run, pdfjsPage)
   const measure = measurerFor({ ...run, ...shape.probe }, fontObj)
   const scale = style.size / run.fontSize
   const widthFor = (index) => shape.width - (index === 0 ? shape.indent : 0)
@@ -184,7 +217,7 @@ function drawParagraph(page, run, text, chain, pdfjsPage, style, warn) {
   }
 
   if (lines.length > shape.baselines.length) {
-    warn('The edited paragraph needed more lines than it had, so it now runs into what follows.')
+    warn('The edited text needed more lines than it had, so it now runs into what follows.')
   }
 }
 
@@ -301,8 +334,9 @@ export async function exportPdf({
       } else if (unsupported) {
         warn(`Some characters in “${text.slice(0, 20)}” have no glyph in any available font.`)
       }
-      if (run.paragraph) {
-        drawParagraph(page, run, text, chain, pdfjsPage, {
+      const shape = shapeFor(run, text, pdfjsPage)
+      if (shape) {
+        drawParagraph(page, { ...run, paragraph: shape }, text, chain, pdfjsPage, {
           size: edit.fontSize ?? run.fontSize,
           color: hexToRgb(edit.color ?? run.color),
         }, warn)

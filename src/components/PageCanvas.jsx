@@ -246,7 +246,7 @@ function RunLayer({
         }}
         className={[
           'cursor-text outline-none',
-          run.paragraph ? 'whitespace-pre-wrap' : 'whitespace-pre',
+          run.paragraph || run.wrap ? 'whitespace-pre-wrap' : 'whitespace-pre',
           selected
             ? run.scrambled ? 'ring-2 ring-amber-500' : 'ring-2 ring-blue-500'
             : run.scrambled
@@ -265,10 +265,18 @@ function RunLayer({
           transformOrigin: 'left top',
           minWidth: `${Math.max(10, box.width)}px`,
           width: run.paragraph ? `${box.width}px` : undefined,
+          // a line that outgrows the text area wraps rather than running off
+          // the page; the margin is the furthest right the document itself goes
+          maxWidth: !run.paragraph && run.wrap
+            ? `${Math.max(box.width, (run.wrap.right - run.x) * viewport.scale)}px`
+            : undefined,
           textIndent: run.paragraph ? `${box.indent}px` : undefined,
           textAlign: run.paragraph?.justified ? 'justify' : undefined,
-          height: run.paragraph ? `${box.coverHeight}px` : `${fontPx * 1.2}px`,
-          lineHeight: `${run.paragraph ? box.lineHeight : fontPx}px`,
+          height: run.paragraph ? `${box.coverHeight}px` : undefined,
+          minHeight: run.paragraph ? undefined : `${fontPx * 1.2}px`,
+          lineHeight: run.paragraph
+            ? `${box.lineHeight}px`
+            : `${run.wrap ? run.wrap.leading * viewport.scale : fontPx}px`,
           fontSize: `${fontPx}px`,
           fontFamily: run.fontFamily,
           fontWeight: bold ? 700 : 400,

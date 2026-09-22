@@ -375,13 +375,50 @@ export function finishRuns(page, runs) {
     for (const id of paragraph.runIds) if (id !== first.id) folded.set(id, null)
   }
 
-  return joined.flatMap((run) => {
+  const finished = joined.flatMap((run) => {
     if (folded.has(run.id)) {
       const block = folded.get(run.id)
       return block ? [block] : []
     }
     return splitSentences(run, fontOf(run.fontName))
   })
+
+  return withWrapBounds(finished)
+}
+
+/**
+ * Tell every line where the page's text stops and how far apart its lines sit.
+ *
+ * A line that is not part of a paragraph - a heading, a table cell - still
+ * has to stop somewhere when it is typed into, and the only margin that
+ * means anything is the one the document itself uses: the furthest right any
+ * of its text reaches. The gap between baselines, taken as the commonest on
+ * the page, is where a continuation line goes.
+ */
+function withWrapBounds(runs) {
+  if (!runs.length) return runs
+
+  let right = 0
+  for (const run of runs) {
+    right = Math.max(right, run.x + Math.abs(run.width))
+  }
+
+  const baselines = [...new Set(runs.map((run) => Math.round(run.y * 2) / 2))].sort((a, b) => b - a)
+  const gaps = []
+  for (let i = 1; i < baselines.length; i += 1) {
+    const gap = baselines[i - 1] - baselines[i]
+    if (gap > 2 && gap < 60) gaps.push(gap)
+  }
+  gaps.sort((a, b) => a - b)
+  const leading = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0
+
+  return runs.map((run) => (run.paragraph ? run : {
+    ...run,
+    wrap: {
+      right,
+      leading: Math.max(leading, run.fontSize * 1.15),
+    },
+  }))
 }
 
 function toHex(r, g, b) {

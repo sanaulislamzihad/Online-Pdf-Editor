@@ -29,6 +29,11 @@ lines rather than rearranged wrongly. Text that no longer fits in the lines
 it had carries on below them, and the status line says so - a page of fixed
 positions has nowhere else to put it.
 
+Everything else - a heading, a cell of a table - keeps its own line until
+what has been typed no longer fits between where it starts and where the
+page's text ends, and then it wraps too rather than running off the edge.
+The margin it wraps at is the furthest right the document itself reaches.
+
 Everything else - headings, table cells, single lines - is offered as the
 sentences it contains, and a link or a coloured word
 within one is offered separately - pdf.js reports a change of font or position
