@@ -201,7 +201,7 @@ export function scriptRuns(text) {
  * face first, then a bundled face for the scripts present, then a built-in.
  */
 export async function fontChain({
-  pdfDoc, pdfLibPage, pdfjsPage, run, bold, italic, text, cache, customFonts,
+  pdfDoc, pdfLibPage, pdfjsPage, run, bold, italic, text, cache, customFonts, printed,
 }) {
   const chain = []
 
@@ -225,6 +225,7 @@ export async function fontChain({
       fontObj: obj,
       fk: obj?.data?.length ? parse(obj.data) : null,
       run,
+      printed,
     })
     if (writer) chain.push({ native: writer })
   }

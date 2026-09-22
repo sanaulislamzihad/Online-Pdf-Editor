@@ -252,9 +252,13 @@ async function drawBlock(page, plan, chain, style, dy, warn) {
 
     const spaces = [...line].filter((c) => c === ' ').length
     const slack = widthFor(i) - natural(line)
+    // only a justified line is told how wide its spaces are; any other line
+    // keeps the width the font itself set them, and saying nothing is how it
+    // is left alone - saying zero would close them up altogether, which is
+    // what a subset without a space glyph of its own then draws
     const wordSpacing = shape.justified && i < lines.length - 1 && spaces && slack > 0
       ? slack / spaces
-      : 0
+      : undefined
 
     const { segments } = planSegments({ original: '', text: line, chain: usable })
     for (const seg of segments) {
@@ -293,6 +297,19 @@ export async function exportPdf({
   const warnings = new Set()
   const warn = (m) => warnings.add(m)
   const fontCache = new Map()
+
+  // An embedded font carries the glyphs that were printed with it and no
+  // others, so what the document draws in a font is the whole of what that
+  // font can be trusted to draw.
+  const printed = new Map()
+  for (const p of pages) {
+    for (const run of p.runs) {
+      if (!run.fontName || run.source === 'ocr') continue
+      let seen = printed.get(run.fontName)
+      if (!seen) printed.set(run.fontName, seen = new Set())
+      for (const ch of run.text) seen.add(ch)
+    }
+  }
 
   const byPage = new Map()
   for (const p of pages) {
@@ -379,7 +396,7 @@ export async function exportPdf({
       const italic = edit.italic ?? run.italic
       const { chain } = await fontChain({
         pdfDoc, pdfLibPage: page, pdfjsPage, run, bold, italic, text,
-        cache: fontCache, customFonts,
+        cache: fontCache, customFonts, printed: printed.get(run.fontName),
       })
       const { segments, unsupported, lost, swapped } = planSegments({
         // a line read back off the page has nothing in common with the

@@ -309,6 +309,11 @@ function RunLayer({
           ref={coverRef}
           style={{
             position: 'absolute',
+            // every erase patch sits under every line of text, the way the
+            // file is written: a line that runs past its own box used to be
+            // rubbed out on screen by the patch of the line after it, and
+            // then reappear in what was downloaded
+            zIndex: 1,
             left: `${cssCover.left}px`,
             top: `${cssCover.top + shift}px`,
             width: `${cssCover.width}px`,
@@ -342,6 +347,7 @@ function RunLayer({
         ].join(' ')}
         style={{
           position: 'absolute',
+          zIndex: 2,
           left: `${box.left + dx}px`,
           top: `${box.top - dy + shift}px`,
           transform: [

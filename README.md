@@ -181,6 +181,11 @@ scan and can show as a patch on a heavily textured one.
 Nothing is re-rendered or rebuilt on export. The uploaded file is kept as-is
 and only the edited lines are touched.
 
+Everything erased is erased before anything is written, on screen as much as
+in the file. A line that runs past its own box used to be rubbed out on screen
+by the patch belonging to the line after it, and then reappear in what was
+downloaded; now the two agree.
+
 **Erasing.** Covering old text with a white rectangle fails the moment a page
 has a coloured block, a photo or a gradient behind it. Instead the document is
 re-saved once with every glyph switched to invisible render mode — page
@@ -197,7 +202,10 @@ path is refused, rather than guessed at, when it cannot be trusted:
   character code means something different in each and pdf.js does not say
   which one drew the run;
 - when the font is a subset without a glyph for something newly typed — very
-  common, subsets only carry what was printed;
+  common, subsets only carry what was printed, and what a subset has printed
+  is taken to be the whole of what it can print. Asking a rebuilt copy of the
+  font instead answers yes for letters the original never carried, and the
+  page then draws a run of nothing where the new word should be;
 - for Bengali, Devanagari, Arabic and other shaped scripts, whose text a PDF
   stores already shaped in visual order.
 

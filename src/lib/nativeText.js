@@ -156,10 +156,14 @@ function widthOfCodes(fontObj, codes, size) {
  * private-use characters pdf.js falls back to for glyphs its table cannot
  * name, which is what lets an unreadable line be written back untouched.
  */
-function glyphTest(fontObj, fk, run) {
+function glyphTest(fontObj, fk, run, printed) {
   const toFontChar = fontObj.toFontChar || []
-  const drawn = new Set([...run.text])
-  if (!fk) return (ch) => drawn.has(ch)
+  const drawn = printed && printed.size ? printed : new Set([...run.text])
+  // a subset carries the glyphs that were printed and no others, whatever a
+  // rebuilt copy of it answers to: asking the copy is how a letter the page
+  // never set gets written as a run of nothing
+  const subset = /^[A-Z]{6}\+/.test(fontObj.name || '')
+  if (!fk || subset) return (ch) => drawn.has(ch)
 
   const cache = new Map()
   return (ch, code) => {
@@ -169,7 +173,11 @@ function glyphTest(fontObj, fk, run) {
     try {
       const point = toFontChar[code]
       const glyph = fk.glyphForCodePoint(point === undefined ? code : point)
-      ok = !!glyph && glyph.id !== 0
+      // A glyph with an id but no outline is a letter the subset was built
+      // without: pdf.js rebuilds the font with room for the whole encoding,
+      // so asking whether the code maps to a glyph always says yes, and the
+      // page then draws a run of nothing where the new word should be.
+      ok = !!glyph && glyph.id !== 0 && glyph.path.commands.length > 0
     } catch {
       ok = false
     }
@@ -199,13 +207,13 @@ export function textWidthIn(fontObj, text, size) {
  * Build a writer for a run, or null when the page's own font cannot be used
  * (no usable encoding, a Type 3 font, or an ambiguous resource).
  */
-export function nativeWriter({ pdfLibPage, fontObj, fk, run }) {
+export function nativeWriter({ pdfLibPage, fontObj, fk, run, printed }) {
   if (!fontObj || fontObj.isType3Font) return null
   const map = encodingMapFor(fontObj)
   if (!map) return null
   const bytes = fontObj.composite ? 2 : 1
   const limit = bytes === 1 ? 0xff : 0xffff
-  const hasGlyph = glyphTest(fontObj, fk, run)
+  const hasGlyph = glyphTest(fontObj, fk, run, printed)
 
   const encode = (text) => {
     const codes = []
