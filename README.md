@@ -28,8 +28,15 @@
 
 <p align="center">
   <a href="https://sanaulislamzihad.github.io/Online-Pdf-Editor/">
-    <img src="Img/screenvideo.gif" width="760" alt="Opening a PDF, editing a line, moving an image and downloading the result">
+    <img src="Videos/demo.gif" width="880" alt="Editing a lecture handout: a line of text retyped in place, a diagram moved and resized, the words inside it read, and the file downloaded">
   </a>
+</p>
+
+<p align="center">
+  <sub>
+    <a href="Videos/demo.webm">Full recording (43s, WebM)</a> &nbsp;·&nbsp;
+    <a href="https://sanaulislamzihad.github.io/Online-Pdf-Editor/">Try it on your own PDF</a>
+  </sub>
 </p>
 
 ---

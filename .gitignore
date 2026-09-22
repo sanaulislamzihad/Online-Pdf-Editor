@@ -7,3 +7,6 @@ dist-ssr
 *.log
 
 *.tmp.mjs
+
+# the raw screen recording; the repository carries the gif and the webm
+Videos/*.mkv
