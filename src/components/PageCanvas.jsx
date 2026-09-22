@@ -207,11 +207,12 @@ function paperAbove(source, dpr, top) {
 const fitCache = new Map()
 let measuringContext = null
 
-function fitToRun(run, viewport) {
-  if (fitCache.has(run.id)) return fitCache.get(run.id)
+function fitToRun(run, viewport, face) {
+  const key = `${run.id}|${face.family}|${face.weight}|${face.style}`
+  if (fitCache.has(key)) return fitCache.get(key)
   const fit = { scaleX: 1, wordSpacing: 0 }
   // a paragraph sets its own lines; there is no single width to match here
-  if (run.paragraph) { fitCache.set(run.id, fit); return fit }
+  if (run.paragraph) { fitCache.set(key, fit); return fit }
   const target = Math.abs(run.width) * viewport.scale
 
   if (target > 1 && run.text.trim()) {
@@ -219,9 +220,7 @@ function fitToRun(run, viewport) {
       measuringContext = document.createElement('canvas').getContext('2d')
     }
     const size = run.fontSize * viewport.scale
-    const style = run.italic ? 'italic ' : ''
-    const weight = run.bold ? '700 ' : '400 '
-    measuringContext.font = `${style}${weight}${size}px ${run.fontFamily}`
+    measuringContext.font = `${face.style} ${face.weight} ${size}px ${face.family}`
     const measured = measuringContext.measureText(run.text).width
 
     if (measured > 1) {
@@ -235,8 +234,27 @@ function fitToRun(run, viewport) {
     }
   }
 
-  fitCache.set(run.id, fit)
+  fitCache.set(key, fit)
   return fit
+}
+
+/**
+ * The face to show a line in, and whether to lean on it.
+ *
+ * The document's own face carries one weight and one slant. Asking a browser
+ * for another on top of it gets a smeared copy of the same letters, wider
+ * than the line it is standing in for - which the width correction then tries
+ * to take back out of the spaces, until the words run together. So a line
+ * whose weight or slant has been changed is shown in a stand-in that really
+ * has them, which is what the export does with it too.
+ */
+function faceFor(run, bold, italic) {
+  const restyled = bold !== run.bold || italic !== run.italic
+  return {
+    family: restyled ? (run.fontStandIn || run.fontFamily) : run.fontFamily,
+    weight: restyled ? (bold ? 700 : 400) : 400,
+    style: restyled ? (italic ? 'italic' : 'normal') : 'normal',
+  }
 }
 /** Map a PDF-space rectangle to a CSS box in the rendered page. */
 function screenRect(rect, viewport) {
@@ -268,7 +286,8 @@ function RunLayer({
   const dx = (edit?.dx ?? 0) * viewport.scale
   const dy = (edit?.dy ?? 0) * viewport.scale
   const fontPx = box.fontPx * (fontSize / run.fontSize)
-  const fit = fitToRun(run, viewport)
+  const face = faceFor(run, bold, italic)
+  const fit = fitToRun(run, viewport, face)
 
   // paint the erase patch with the real page background behind the text
   useEffect(() => {
@@ -370,9 +389,9 @@ function RunLayer({
             ? `${box.lineHeight}px`
             : `${run.wrap ? run.wrap.leading * viewport.scale : fontPx}px`,
           fontSize: `${fontPx}px`,
-          fontFamily: run.fontFamily,
-          fontWeight: bold ? 700 : 400,
-          fontStyle: italic ? 'italic' : 'normal',
+          fontFamily: face.family,
+          fontWeight: face.weight,
+          fontStyle: face.style,
           wordSpacing: fit.wordSpacing ? `${fit.wordSpacing.toFixed(2)}px` : undefined,
           // an untouched run stays invisible so the original pixels show through
           color: touched ? color : 'transparent',

@@ -117,7 +117,18 @@ function fontInfoFor(page, fontName) {
   const spaced = base.replace(/([a-z])([A-Z])/g, '$1 $2')
   const named = base.length > 2 ? `"${base}", "${spaced}", ` : ''
   const embedded = fontName ? `"${fontName}", ` : ''
-  return { rawName: clean, kind, family: `${embedded}${named}${CSS[kind]}`, bold, italic }
+  // Without the document's own face, for when the reader asks for a weight or
+  // a slant it does not have: that face carries one weight and one slant, and
+  // leaning on it for another is what a browser does by smearing the letters.
+  const stood = `${named}${CSS[kind]}`
+  return {
+    rawName: clean,
+    kind,
+    family: `${embedded}${stood}`,
+    standIn: stood,
+    bold,
+    italic,
+  }
 }
 
 /**
@@ -334,6 +345,7 @@ export async function extractRuns(page, pageIndex) {
       fontName: item.fontName,
       fontRawName: info.rawName,
       fontFamily: info.family,
+      fontStandIn: info.standIn,
       fontKind: info.kind,
       bold: info.bold,
       italic: info.italic,
