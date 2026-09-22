@@ -16,6 +16,24 @@ npm run dev        # http://localhost:5175
 npm run build      # static site in dist/ - host it anywhere
 ```
 
+## Putting it online
+
+There is no server to run. The build is a folder of files, and every PDF is
+opened, edited and saved inside the visitor's own browser, so any static host
+will do.
+
+A push to `main` publishes it to GitHub Pages by itself - the workflow in
+`.github/workflows/pages.yml` builds the site and deploys it. Turn it on once
+under **Settings → Pages → Source: GitHub Actions**, and the editor is at
+`https://<user>.github.io/Online-Pdf-Editor/`.
+
+A project page lives under a path rather than at the root, which the build
+has to be told, so it is `npm run build:pages` that produces that copy. Two
+things are fetched while the editor runs rather than bundled into it: the
+faces in `public/fonts`, which come from the site itself, and the recognition
+worker and language data, which come from a CDN the first time a picture is
+read.
+
 ## Getting a file in and out
 
 The opening screen is one target: drop a PDF on it, or click it to choose
