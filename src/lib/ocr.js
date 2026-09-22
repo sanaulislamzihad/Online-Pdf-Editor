@@ -44,7 +44,8 @@ async function renderForOcr(page) {
 const MIN_LINE_PIXELS = 70
 const CROP_PAD = 6
 
-const PSM_COLUMN = '4' // a column of text in mixed sizes
+const PSM_AUTO = '3' // find the blocks of the picture and read each
+const PSM_COLUMN = '4' // one column of text in mixed sizes
 const PSM_LINE = '7' // one line and nothing else
 
 /**
@@ -77,10 +78,14 @@ async function withRecogniser(language, onProgress, label, job) {
 
 /** A tight crop around one recognised line, for a closer second look. */
 function cropLine(canvas, bbox) {
-  const pad = Math.max(2, Math.round((bbox.y1 - bbox.y0) * 0.25))
-  const left = Math.max(0, bbox.x0 - pad)
+  const tall = bbox.y1 - bbox.y0
+  const pad = Math.max(2, Math.round(tall * 0.25))
+  // wider than it is deep: a letter the first reading dropped is a letter
+  // outside the box it drew, and almost always at one end of the line
+  const side = Math.max(2, Math.round(tall * 0.6))
+  const left = Math.max(0, bbox.x0 - side)
   const top = Math.max(0, bbox.y0 - pad)
-  const width = Math.min(canvas.width - left, bbox.x1 - bbox.x0 + pad * 2)
+  const width = Math.min(canvas.width - left, bbox.x1 - bbox.x0 + side * 2)
   const height = Math.min(canvas.height - top, bbox.y1 - bbox.y0 + pad * 2)
   if (width < 4 || height < 4) return null
   const out = document.createElement('canvas')
@@ -404,8 +409,6 @@ function measureFaces(canvas, box, baseline, text) {
   }
 }
 
-const CLEAR = 0.12 // how far ahead a line has to be to answer for itself
-
 /**
  * Settle on a face for every line of one picture.
  *
@@ -416,8 +419,10 @@ const CLEAR = 0.12 // how far ahead a line has to be to answer for itself
  *
  * What a picture is made of is regions, and what marks a region out is what it
  * is written on: a code block on its dark panel, a caption on the paper. So
- * the lines are grouped by the colour behind them and each group is settled by
- * the lines in it that were surest, unless a line is surer still on its own.
+ * the lines are grouped by the colour behind them, and the whole of a group
+ * takes the family its surest lines voted for - one line answering for itself
+ * is exactly how a code block ends up half in a sans. Weight and slant stay a
+ * line's own, since a heading is bold and what it heads is not.
  */
 function settleFaces(measured) {
   const groups = []
@@ -444,9 +449,7 @@ function settleFaces(measured) {
   return measured.map((m) => {
     if (!m.faces) return null
     const group = groups.find((g) => g.members.includes(m))
-    const kind = m.faces.margin >= CLEAR ? m.faces.kinds[0].face.kind : group.kind
-
-    const chosen = m.faces.kinds.find((k) => k.face.kind === kind) || m.faces.kinds[0]
+    const chosen = m.faces.kinds.find((k) => k.face.kind === group.kind) || m.faces.kinds[0]
     const bolder = chosen.boldMass !== null &&
       Math.abs(chosen.boldMass - m.faces.area) < Math.abs(chosen.mass - m.faces.area) * 0.92
     return {
@@ -458,13 +461,39 @@ function settleFaces(measured) {
   })
 }
 
+/**
+ * Which of two readings of the same line to keep.
+ *
+ * Longer wins, because what goes wrong on a coloured picture is whole words
+ * being passed over rather than letters being misread - as long as the
+ * recogniser is not much less sure of what it read.
+ */
+function better(a, b) {
+  // a reading that covers far more of the picture than the other has run on
+  // into the column beside it: that is two lines glued, not a fuller reading
+  const spread = boxArea(a) / boxArea(b)
+  if (spread > 1.6) return false
+  if (spread < 1 / 1.6) return true
+
+  const grew = (a.text || '').trim().length
+  const was = (b.text || '').trim().length
+  if (grew > was * 1.15) return a.confidence > b.confidence - 15
+  if (was > grew * 1.15) return false
+  return a.confidence > b.confidence
+}
+
+const boxArea = (line) => Math.max(
+  1, (line.bbox.x1 - line.bbox.x0) * (line.bbox.y1 - line.bbox.y0),
+)
+
 /** Do two recognised lines cover the same part of the picture? */
 function overlaps(a, b) {
   const w = Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0)
   const h = Math.min(a.bbox.y1, b.bbox.y1) - Math.max(a.bbox.y0, b.bbox.y0)
   if (w <= 0 || h <= 0) return false
-  const area = Math.max(1, (a.bbox.x1 - a.bbox.x0) * (a.bbox.y1 - a.bbox.y0))
-  return (w * h) / area > 0.4
+  // either way round: one reading of a line often runs on into the column
+  // beside it, and that is the same line still, not a second one
+  return (w * h) / Math.min(boxArea(a), boxArea(b)) > 0.4
 }
 
 function linesOf(data) {
@@ -512,22 +541,32 @@ export async function recogniseImage({ page, pageIndex, rect, language, onProgre
   if (!region) return []
 
   const lines = await withRecogniser(language, onProgress, 'this image', async (read) => {
-    const found = await read(region.crop, PSM_COLUMN)
+    const found = []
+    const keep = (line) => {
+      const at = found.findIndex((seen) => overlaps(line, seen))
+      if (at < 0) found.push(line)
+      else if (better(line, found[at])) found[at] = line
+    }
 
-    // syntax colouring makes layout analysis skip whole lines, and flattening
-    // the picture to plain black on white finds them. Flattening also smears
-    // edges, so each line it alone saw is then read again from the untouched
-    // crop, one line at a time, where nothing around it can interfere.
-    const flattened = binarise(region.crop)
-    for (const line of await read(flattened, PSM_COLUMN)) {
-      if (found.some((seen) => overlaps(line, seen))) continue
+    // A picture is read three ways, because each way misses something else.
+    // Laying it out as blocks keeps two columns apart; as one column, it
+    // catches the odd line that block analysis passed over. Syntax colouring
+    // makes both of them drop coloured words altogether, and flattening the
+    // picture to plain black on white brings those back.
+    for (const line of await read(region.crop, PSM_AUTO)) keep(line)
+    for (const line of await read(region.crop, PSM_COLUMN)) keep(line)
+    for (const line of await read(binarise(region.crop), PSM_AUTO)) keep(line)
+
+    // Flattening smears edges, so whatever survived all that is looked at once
+    // more on its own, at line scale, in the untouched picture, where nothing
+    // around it can interfere.
+    for (const line of found) {
       const tight = cropLine(region.crop, line.bbox)
       const closer = tight ? await read(tight, PSM_LINE) : []
-      if (closer.length && closer[0].confidence > line.confidence) {
+      if (closer.length && better(closer[0], line)) {
         line.text = closer[0].text
         line.confidence = closer[0].confidence
       }
-      found.push(line)
     }
     return found
   })
@@ -599,9 +638,16 @@ function runsFromLines({ lines, viewport, pageIndex, toPage, idPrefix, canvas })
     // baseline to the top of the line is the best measure of it we have -
     // until the writing itself is compared with the faces it might be in,
     // which says what size it is however few of its letters are tall
+    // Cap height is about 0.72 em for most faces, and the distance from the
+    // baseline to the top of the line is the best measure of it we have. The
+    // face a line was matched to says more - it knows the size that makes the
+    // words fill the space they fill - but only within reach of this, because
+    // a line the recogniser read half of would otherwise be set enormous to
+    // make what it did read span the whole width.
+    const capped = Math.max(4, Math.abs(m.topY - m.y0) / 0.72)
     const fontSize = face
-      ? face.size / viewport.scale
-      : Math.max(4, Math.abs(m.topY - m.y0) / 0.72)
+      ? Math.min(Math.max(face.size / viewport.scale, capped * 0.8), capped * 1.5)
+      : capped
 
     return {
       id: `${idPrefix}${index}`,

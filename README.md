@@ -95,10 +95,18 @@ with words in it. Both can be read back.
 A page that is one big picture gets a banner offering to read the whole of
 it. Select an image and the panel offers to read just that image, which is
 how the words in a screenshot become editable lines sitting where they are
-drawn. A screenshot is often part light and part dark, and syntax colouring
-makes layout analysis skip whole lines, so the picture is read twice - once
-as it is and once flattened to plain black on white - and any line only the
-flattened pass saw is then read again on its own from the original.
+drawn.
+
+An image is read three ways, because each way misses something else. Laid
+out as blocks, so that a code panel and the column of prose beside it stay
+apart; as a single column, which catches the odd line block analysis passed
+over; and flattened to plain black on white, which brings back the coloured
+words that syntax highlighting makes both of the others drop altogether.
+Where two readings cover the same line the fuller one is kept, unless it is
+so much wider that it has run into the column beside it - that is two lines
+glued, not a better reading. Whatever survives is then looked at once more on
+its own, at line scale, in the untouched picture, where nothing around it can
+interfere.
 
 Recognition says what the words are, never what they looked like, so a line
 read off a picture used to come back as sans-serif regular whatever it was,
