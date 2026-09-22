@@ -4,6 +4,7 @@ import { coverRect } from '../lib/plateBuild.js'
 import { hasChanges } from '../lib/edits.js'
 import { shiftAt, totalGrowth } from '../lib/reflow.js'
 import ImageLayer from './ImageLayer.jsx'
+import { Button, Icon } from './ui.jsx'
 
 export default function PageCanvas({
   pageData,
@@ -59,7 +60,7 @@ export default function PageCanvas({
 
   return (
     <div
-      className="relative mx-auto bg-white shadow-lg ring-1 ring-black/10"
+      className="relative mx-auto bg-white shadow-[0_1px_3px_rgba(15,23,42,0.1),0_8px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-slate-900/10"
       style={grown ? { paddingBottom: `${grown}px` } : undefined}
     >
       <canvas ref={canvasRef} className="block" />
@@ -69,18 +70,21 @@ export default function PageCanvas({
       )}
 
       {scanned && (
-        <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-amber-100/95 px-3 py-2 text-[13px] text-amber-900 shadow">
-          <span className="flex-1">
-            This page is a picture of text, so there is nothing to select. Read it
-            first and the lines become editable.
+        <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-3 border-b border-amber-300/70 bg-amber-50/95 px-3 py-2.5 backdrop-blur-sm">
+          <Icon name="eye" className="h-4 w-4 shrink-0 text-amber-700" />
+          <span className="flex-1 text-[12.5px] leading-snug text-amber-900">
+            This page is a picture of text, so there is nothing to select. Read
+            it first and the lines become editable.
           </span>
-          <button
+          <Button
+            variant="solid"
+            size="sm"
             onClick={() => onRunOcr(pageData.index)}
             disabled={ocrBusy}
-            className="shrink-0 rounded bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+            className="shrink-0 bg-amber-600 hover:bg-amber-500 active:bg-amber-700"
           >
             {ocrBusy ? 'Reading…' : 'Read this page'}
-          </button>
+          </Button>
         </div>
       )}
       {viewport && (

@@ -16,6 +16,18 @@ npm run dev        # http://localhost:5175
 npm run build      # static site in dist/ - host it anywhere
 ```
 
+## Getting a file in and out
+
+The opening screen is one target: drop a PDF on it, or click it to choose
+one. Once a file is open the toolbar carries its name, the zoom, the language
+recognition will read in, undo, and the download.
+
+The arrow at the top left goes back to that screen, and “Open another” swaps
+the file without leaving the editor. Edits live in the tab and nowhere else,
+so either one asks first - but only while something would actually be lost:
+once the edited file has been downloaded, leaving is silent, and the status
+bar says so.
+
 ## What you can do to a line
 
 Where consecutive lines are clearly one paragraph - one font, one left
@@ -236,6 +248,8 @@ the editor and of the exported file land in `outDir`.
 
 | Path | What it does |
 | --- | --- |
+| `src/App.jsx` | the editor itself: what is open, what has been edited, what is selected |
+| `src/components/ui.jsx` | the buttons, icons and fields every panel is built from |
 | `src/lib/extract.js` | loads a PDF, renders pages, pulls out text runs and their colours |
 | `src/lib/contentStream.js` | content-stream tokeniser; finds and hides text operators |
 | `src/lib/reflow.js` | opens a page up under text that has gained a line |
