@@ -25,14 +25,23 @@ The text is broken again to the measure the page uses and each line is put
 back on the baseline it had, justified at the spaces if the paragraph was.
 A paragraph is only treated this way when re-setting it untouched reproduces
 the lines it already has, so one that is not understood is left as ordinary
-lines rather than rearranged wrongly. Text that no longer fits in the lines
-it had carries on below them, and the status line says so - a page of fixed
-positions has nowhere else to put it.
+lines rather than rearranged wrongly.
 
 Everything else - a heading, a cell of a table - keeps its own line until
 what has been typed no longer fits between where it starts and where the
 page's text ends, and then it wraps too rather than running off the edge.
 The margin it wraps at is the furthest right the document itself reaches.
+
+Text that has gained a line needs room that a page of fixed positions does
+not have, so the page is opened up to give it: everything below the line that
+grew moves down by the height of what it gained, and if there is not enough
+margin left at the foot of the page, the page itself is made that much
+taller. Nothing is redrawn to do it - the page's own drawing instructions are
+put into a form and drawn twice, once clipped to what is above the break and
+left where it is, once clipped to what is below and translated down - so
+text, images and the rule under a heading alike come through as the very
+objects they were, only lower. The editor shows the page the same way, since
+the page being edited has to be the page that comes out.
 
 Everything else - headings, table cells, single lines - is offered as the
 sentences it contains, and a link or a coloured word
@@ -172,8 +181,10 @@ since the original face has no bold or italic to offer.
 
 ## Known limits
 
-- Replacement text that is wider than the original will run into whatever sits
-  next to it — there is no reflow.
+- Replacement text still runs into whatever sits beside it on the same line:
+  a page is opened up downwards, never sideways.
+- The strip a page opens up is filled with the colour the page has just above
+  it, which is the paper on all but a few pages.
 - While typing, the overlay uses a system font of the right class, so on-screen
   letter widths are close to, not identical to, the exported ones.
 - Scanned PDFs have no text to edit. Encrypted files fall back to flat colour
@@ -198,6 +209,7 @@ the editor and of the exported file land in `outDir`.
 | --- | --- |
 | `src/lib/extract.js` | loads a PDF, renders pages, pulls out text runs and their colours |
 | `src/lib/contentStream.js` | content-stream tokeniser; finds and hides text operators |
+| `src/lib/reflow.js` | opens a page up under text that has gained a line |
 | `src/lib/plateBuild.js` | builds the text-free background plate |
 | `src/lib/plate.js` | renders and caches plate pages, hands out slices |
 | `src/lib/nativeText.js` | writes text with the page's own font resource |

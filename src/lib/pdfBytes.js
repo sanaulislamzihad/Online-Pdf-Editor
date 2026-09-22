@@ -7,8 +7,11 @@ export function pageContentBytes(page) {
   const ctx = page.node.context
 
   const decodeOne = (obj) => {
-    const stream = obj instanceof PDFRawStream ? obj : ctx.lookup(obj, PDFRawStream)
-    return decodePDFRawStream(stream).decode()
+    const stream = obj instanceof PDFRawStream ? obj : ctx.lookup(obj)
+    if (stream instanceof PDFRawStream) return decodePDFRawStream(stream).decode()
+    // anything pdf-lib has queued for the page itself is not encoded yet
+    if (typeof stream?.getUnencodedContents === 'function') return stream.getUnencodedContents()
+    throw new Error('content stream cannot be decoded')
   }
 
   try {
@@ -28,10 +31,23 @@ export function pageContentBytes(page) {
   }
 }
 
-/** Replace a page's content with the given bytes. */
+/**
+ * Replace a page's content with the given bytes.
+ *
+ * The bytes always come from `pageContentBytes`, which includes whatever
+ * pdf-lib has queued to draw on this page - so that stream is now part of
+ * what is being written and is dropped, rather than being appended a second
+ * time when the file is saved.
+ */
 export function setPageContent(pdfDoc, page, bytes) {
   const stream = pdfDoc.context.flateStream(bytes)
-  page.node.set(PDFName.of('Contents'), pdfDoc.context.register(stream))
+  // an array, because that is what pdf-lib appends to when it is asked to
+  // draw on this page later
+  const ref = pdfDoc.context.register(stream)
+  page.node.set(PDFName.of('Contents'), pdfDoc.context.obj([ref]))
+  if (page.contentStreamRef) pdfDoc.context.delete(page.contentStreamRef)
+  page.contentStream = undefined
+  page.contentStreamRef = undefined
 }
 
 /** Corners of the unit square mapped through a matrix, as a bounding box. */

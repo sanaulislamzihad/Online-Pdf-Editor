@@ -403,7 +403,15 @@ function withWrapBounds(runs) {
     right = Math.max(right, run.x + Math.abs(run.width))
   }
 
-  const baselines = [...new Set(runs.map((run) => Math.round(run.y * 2) / 2))].sort((a, b) => b - a)
+  // a folded paragraph hides the very baselines that say what the leading is,
+  // so ask it for the ones it was set on
+  const seen = new Set()
+  for (const run of runs) {
+    for (const y of run.paragraph ? run.paragraph.baselines : [run.y]) {
+      seen.add(Math.round(y * 2) / 2)
+    }
+  }
+  const baselines = [...seen].sort((a, b) => b - a)
   const gaps = []
   for (let i = 1; i < baselines.length; i += 1) {
     const gap = baselines[i - 1] - baselines[i]
@@ -416,7 +424,10 @@ function withWrapBounds(runs) {
     ...run,
     wrap: {
       right,
-      leading: Math.max(leading, run.fontSize * 1.15),
+      // the page's own leading, but a page with little text on it - a title
+      // page, a table of widely spaced rows - has a median that says nothing
+      // about how close two lines of one block should be
+      leading: Math.min(Math.max(leading, run.fontSize * 1.15), run.fontSize * 2),
     },
   }))
 }

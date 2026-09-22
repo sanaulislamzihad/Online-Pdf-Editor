@@ -322,6 +322,20 @@ function editedSpan(original, text) {
 }
 
 /**
+ * The chain newly typed text may be set in.
+ *
+ * The page's own font is all-or-nothing: falling back on only the words whose
+ * glyphs are missing would leave one piece of text set in two typefaces. What
+ * counts as one piece is the caller's to say - a line on its own, or a whole
+ * block being set again across several of them.
+ */
+export function usableChain(chain, text) {
+  if (!chain[0]?.native) return chain
+  const ink = scriptRuns(text).filter((part) => part.cls !== 'space')
+  return ink.every((part) => covers(chain[0], part.text, false)) ? chain : chain.slice(1)
+}
+
+/**
  * Work out which font draws each part of the line, keeping untouched text on
  * the page's own font and giving anything newly typed a font that can shape
  * it.
@@ -335,14 +349,7 @@ export function planSegments({ original, text, chain }) {
   for (const span of editedSpan(original ?? text, text)) {
     const parts = scriptRuns(span.text)
 
-    // within newly typed text the page's own font is all-or-nothing: falling
-    // back on only the words whose glyphs are missing would leave one line
-    // set in two typefaces
-    let usable = chain
-    if (!span.kept && chain[0]?.native) {
-      const ink = parts.filter((part) => part.cls !== 'space')
-      if (!ink.every((part) => covers(chain[0], part.text, false))) usable = chain.slice(1)
-    }
+    const usable = span.kept ? chain : usableChain(chain, span.text)
 
     for (const part of parts) {
       let chosen = usable.find((cand) => covers(cand, part.text, span.kept))

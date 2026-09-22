@@ -5,9 +5,10 @@ import { currentRect, imageChanged } from './images.js'
 import { findXObjectOps, removeRanges } from './contentStream.js'
 import { pageContentBytes, setPageContent } from './pdfBytes.js'
 import { PDFName, PDFNumber, PDFOperator, PDFOperatorNames as ImgOps } from 'pdf-lib'
-import { fontChain, planSegments } from './fonts.js'
+import { fontChain, planSegments, usableChain } from './fonts.js'
 import { pushNativeText } from './nativeText.js'
 import { breakLines, measurerFor } from './paragraphs.js'
+import { applyGrowth, growthFor, lowestInk, shiftAt } from './reflow.js'
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
@@ -172,25 +173,75 @@ function fontObjectFor(run, pdfjsPage) {
 }
 
 /**
- * Set a paragraph again across its own lines.
+ * Break an edited block into the lines it is going to be set in.
  *
- * Its text is broken to the measure the page uses, each line placed on the
- * baseline it had, and every line but the last widened at the spaces to
- * reach the margin if the paragraph was justified. Text that no longer fits
- * in the lines it had carries on below them, which is the one thing a page
- * of fixed positions cannot absorb quietly.
+ * Both the file and the page on screen are built from this: the export writes
+ * these lines, and the editor opens the page up by exactly the room they need,
+ * so the two agree about where everything below them ends up.
  */
-function drawParagraph(page, run, text, chain, pdfjsPage, style, warn) {
-  const shape = run.paragraph
+export function planBlock(run, text, size, pdfjsPage) {
+  const shape = shapeFor(run, text, pdfjsPage)
+  if (!shape) return null
+
   const fontObj = fontObjectFor(run, pdfjsPage)
   const measure = measurerFor({ ...run, ...shape.probe }, fontObj)
-  const scale = style.size / run.fontSize
+  const scale = size / run.fontSize
   const widthFor = (index) => shape.width - (index === 0 ? shape.indent : 0)
   const natural = (value) => (measure?.natural(value) ?? 0) * scale
 
-  const lines = measure
-    ? breakLines(text, natural, widthFor)
-    : [text]
+  return {
+    shape,
+    widthFor,
+    natural,
+    lines: measure ? breakLines(text, natural, widthFor) : [text],
+  }
+}
+
+/**
+ * Where a page has to open up, and by how much, for the edits made to it.
+ *
+ * Text that no longer fits in the lines it had has to go somewhere, and a
+ * page of fixed positions has no room to give it: the room is made by moving
+ * everything below down.
+ */
+export function planGrowths(pageEntry, edits) {
+  const growths = []
+  const plans = new Map()
+
+  for (const run of pageEntry.runs) {
+    const edit = edits[run.id]
+    if (!edit || edit.deleted) continue
+    const text = edit.text ?? run.text
+    if (!text) continue
+
+    const size = edit.fontSize ?? run.fontSize
+    const plan = planBlock(run, text, size, pageEntry.page)
+    if (!plan) continue
+    plans.set(run.id, plan)
+
+    const growth = growthFor({
+      shape: plan.shape, lineCount: plan.lines.length, size, runs: pageEntry.runs,
+    })
+    if (growth) growths.push(growth)
+  }
+
+  return { growths, plans }
+}
+
+/**
+ * Set a block again across its own lines.
+ *
+ * Its text is broken to the measure the page uses, each line placed on the
+ * baseline it had, and every line but the last widened at the spaces to reach
+ * the margin if the block was justified. Lines it has gained fall below the
+ * last baseline it had - into the room the page has been opened up by.
+ */
+async function drawBlock(page, plan, chain, style, dy, warn) {
+  const { shape, lines, widthFor, natural } = plan
+  // the block is one piece of text, so it is the whole of it that decides
+  // whether the page's own font can set it - not each line separately, which
+  // would set the lines it can in one face and the rest in another
+  const usable = usableChain(chain, lines.join(' '))
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
@@ -205,19 +256,18 @@ function drawParagraph(page, run, text, chain, pdfjsPage, style, warn) {
       ? slack / spaces
       : 0
 
-    const { segments } = planSegments({ original: '', text: line, chain })
+    const { segments } = planSegments({ original: '', text: line, chain: usable })
+    for (const seg of segments) {
+      if (!seg.native) seg.font = await seg.cand.embed()
+    }
     drawSegments(page, segments, {
       x,
-      y,
+      y: y - dy,
       size: style.size,
       color: style.color,
       angle: 0,
       wordSpacing,
     }, warn)
-  }
-
-  if (lines.length > shape.baselines.length) {
-    warn('The edited text needed more lines than it had, so it now runs into what follows.')
   }
 }
 
@@ -274,11 +324,25 @@ export async function exportPdf({
   for (const [pageIndex, items] of byPage) {
     onProgress?.(`Applying edits to page ${pageIndex + 1}…`)
     const page = pdfDoc.getPage(pageIndex)
-    const pdfjsPage = pages.find((p) => p.index === pageIndex).page
+    const pageEntry = pages.find((p) => p.index === pageIndex)
+    const pdfjsPage = pageEntry.page
 
-    // 1. erase: stamp the original background back over each edited line
+    // 1. make room: text that has gained a line pushes everything below it
+    // down, rather than being drawn on top of what comes next
+    const { growths, plans } = planGrowths(pageEntry, edits)
+    if (growths.length) {
+      applyGrowth(pdfDoc, page, growths, {
+        room: lowestInk(pageEntry.runs, images[pageIndex] || []),
+        warn,
+      })
+    }
+
+    // 2. erase: stamp the original background back over each edited line -
+    // wherever that line has ended up
     for (const { run } of items) {
-      const rect = coverRect(run)
+      const shift = shiftAt(growths, run.y)
+      const original = coverRect(run)
+      const rect = { ...original, y: original.y - shift }
 
       // recognised text is part of the picture of the page, so there is no
       // text-free version of it to fall back on - paint over the paper
@@ -291,7 +355,7 @@ export async function exportPdf({
 
       let png = null
       try {
-        png = plate ? await plate.patchPng(pageIndex, rect) : null
+        png = plate ? await plate.patchPng(pageIndex, original) : null
       } catch {
         png = null
       }
@@ -306,7 +370,7 @@ export async function exportPdf({
       }
     }
 
-    // 2. draw the replacement text
+    // 3. draw the replacement text
     for (const { run, edit } of items) {
       if (edit.deleted) continue
       const text = edit.text ?? run.text
@@ -334,18 +398,19 @@ export async function exportPdf({
       } else if (unsupported) {
         warn(`Some characters in “${text.slice(0, 20)}” have no glyph in any available font.`)
       }
-      const shape = shapeFor(run, text, pdfjsPage)
-      if (shape) {
-        drawParagraph(page, { ...run, paragraph: shape }, text, chain, pdfjsPage, {
+      const shift = shiftAt(growths, run.y)
+      const plan = plans.get(run.id)
+      if (plan) {
+        await drawBlock(page, plan, chain, {
           size: edit.fontSize ?? run.fontSize,
           color: hexToRgb(edit.color ?? run.color),
-        }, warn)
+        }, shift, warn)
         continue
       }
 
       drawSegments(page, segments, {
         x: run.x + (edit.dx ?? 0),
-        y: run.y + (edit.dy ?? 0),
+        y: run.y + (edit.dy ?? 0) - shift,
         size: edit.fontSize ?? run.fontSize,
         color: hexToRgb(edit.color ?? run.color),
         angle: run.angle,

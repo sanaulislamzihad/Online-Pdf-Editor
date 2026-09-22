@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { startPageRender, sampleColors, runToScreenBox, finishRuns } from '../lib/extract.js'
 import { coverRect } from '../lib/plateBuild.js'
 import { hasChanges } from '../lib/edits.js'
+import { shiftAt, totalGrowth } from '../lib/reflow.js'
 import ImageLayer from './ImageLayer.jsx'
 
 export default function PageCanvas({
   pageData,
   zoom,
   edits,
+  growths,
   selectedId,
   plate,
   plateReady,
@@ -53,9 +55,18 @@ export default function PageCanvas({
     return () => { cancelled = true; task.cancel() }
   }, [pageData, zoom])
 
+  const grown = viewport ? totalGrowth(growths) * viewport.scale : 0
+
   return (
-    <div className="relative mx-auto bg-white shadow-lg ring-1 ring-black/10">
+    <div
+      className="relative mx-auto bg-white shadow-lg ring-1 ring-black/10"
+      style={grown ? { paddingBottom: `${grown}px` } : undefined}
+    >
       <canvas ref={canvasRef} className="block" />
+
+      {viewport && growths.length > 0 && (
+        <ShiftLayer growths={growths} viewport={viewport} canvasRef={canvasRef} />
+      )}
 
       {scanned && (
         <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-amber-100/95 px-3 py-2 text-[13px] text-amber-900 shadow">
@@ -80,6 +91,7 @@ export default function PageCanvas({
               key={image.id}
               image={image}
               viewport={viewport}
+              shift={shiftAt(growths, image.rect.y + image.rect.h) * viewport.scale}
               edit={imageEdits[image.id]}
               selected={selectedImageId === image.id}
               plate={imagePlate}
@@ -95,6 +107,7 @@ export default function PageCanvas({
               run={run}
               pageIndex={pageData.index}
               viewport={viewport}
+              shift={shiftAt(growths, run.y) * viewport.scale}
               edit={edits[run.id]}
               selected={selectedId === run.id}
               plate={plate}
@@ -107,6 +120,75 @@ export default function PageCanvas({
       )}
     </div>
   )
+}
+
+/**
+ * Show the page opened up where an edit has outgrown the lines it had.
+ *
+ * The exported file moves everything below such an edit down, so the page on
+ * screen has to move with it - otherwise the page being edited is not the
+ * page that comes out. The rendered page is its own source: each band below a
+ * growth point is copied out of it and painted lower, and the strip left
+ * behind is filled with the paper that was there.
+ */
+function ShiftLayer({ growths, viewport, canvasRef }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const canvas = ref.current
+    const source = canvasRef.current
+    if (!canvas || !source || !growths.length) return
+
+    const { scale, width, height } = viewport
+    const dpr = source.width / width || 1
+    const cuts = [...growths].sort((a, b) => b.y0 - a.y0)
+    const cutAt = cuts.map((growth) => viewport.convertToViewportPoint(0, growth.y0)[1])
+    const top = cutAt[0]
+    const tall = height - top + totalGrowth(growths) * scale
+
+    canvas.style.top = `${top}px`
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${tall}px`
+    canvas.width = Math.ceil(width * dpr)
+    canvas.height = Math.ceil(tall * dpr)
+
+    const ctx = canvas.getContext('2d')
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.fillStyle = paperAbove(source, dpr, top)
+    ctx.fillRect(0, 0, width, tall)
+
+    let moved = 0
+    for (let i = 0; i < cuts.length; i += 1) {
+      moved += cuts[i].amount * scale
+      const from = cutAt[i]
+      const to = i + 1 < cuts.length ? cutAt[i + 1] : height
+      if (to - from < 0.5) continue
+      ctx.drawImage(
+        source,
+        0, from * dpr, source.width, (to - from) * dpr,
+        0, from - top + moved, width, to - from,
+      )
+    }
+  }, [growths, viewport, canvasRef])
+
+  return (
+    <canvas
+      ref={ref}
+      style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
+    />
+  )
+}
+
+/** The colour of the page just above a cut, to fill the strip opened below it. */
+function paperAbove(source, dpr, top) {
+  try {
+    const ctx = source.getContext('2d', { willReadFrequently: true })
+    const y = Math.min(source.height - 1, Math.max(0, Math.round(top * dpr) - 2))
+    const [r, g, b] = ctx.getImageData(2, y, 1, 1).data
+    return `rgb(${r}, ${g}, ${b})`
+  } catch {
+    return '#ffffff'
+  }
 }
 
 /**
@@ -165,7 +247,7 @@ function screenRect(rect, viewport) {
 }
 
 function RunLayer({
-  run, pageIndex, viewport, edit, selected, plate, plateReady, onSelect, onEditRun,
+  run, pageIndex, viewport, edit, selected, plate, plateReady, shift, onSelect, onEditRun,
 }) {
   const ref = useRef(null)
   const coverRef = useRef(null)
@@ -224,7 +306,7 @@ function RunLayer({
           style={{
             position: 'absolute',
             left: `${cssCover.left}px`,
-            top: `${cssCover.top}px`,
+            top: `${cssCover.top + shift}px`,
             width: `${cssCover.width}px`,
             height: `${cssCover.height}px`,
             background: plateReady && run.source !== 'ocr' ? undefined : run.bg,
@@ -257,7 +339,7 @@ function RunLayer({
         style={{
           position: 'absolute',
           left: `${box.left + dx}px`,
-          top: `${box.top - dy}px`,
+          top: `${box.top - dy + shift}px`,
           transform: [
             box.angleDeg ? `rotate(${box.angleDeg}deg)` : '',
             Math.abs(fit.scaleX - 1) > 0.02 ? `scaleX(${fit.scaleX.toFixed(4)})` : '',

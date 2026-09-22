@@ -71,7 +71,7 @@ const HANDLES = [
  * preview of where it is now.
  */
 export default function ImageLayer({
-  image, viewport, edit, selected, plate, plateReady, pageCanvasRef,
+  image, viewport, edit, selected, plate, plateReady, pageCanvasRef, shift = 0,
   onSelect, onEdit,
 }) {
   const patchRef = useRef(null)
@@ -174,7 +174,7 @@ export default function ImageLayer({
           style={{
             position: 'absolute',
             left: `${origin.left}px`,
-            top: `${origin.top}px`,
+            top: `${origin.top + shift}px`,
             width: `${origin.width}px`,
             height: `${origin.height}px`,
             background: plateReady ? undefined : '#ffffff',
@@ -189,7 +189,7 @@ export default function ImageLayer({
           style={{
             position: 'absolute',
             left: `${box.left}px`,
-            top: `${box.top}px`,
+            top: `${box.top + shift}px`,
             width: `${box.width}px`,
             height: `${box.height}px`,
             pointerEvents: 'none',
@@ -210,7 +210,7 @@ export default function ImageLayer({
         ].join(' ')}
         style={{
           left: `${box.left}px`,
-          top: `${box.top}px`,
+          top: `${box.top + shift}px`,
           width: `${box.width}px`,
           height: `${box.height}px`,
         }}

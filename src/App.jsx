@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadPdf, extractRuns } from './lib/extract.js'
-import { exportPdf } from './lib/export.js'
+import { exportPdf, planGrowths } from './lib/export.js'
 import { PlateStore } from './lib/plate.js'
 import { coverRect } from './lib/plateBuild.js'
 import { describeFont } from './lib/fonts.js'
@@ -11,6 +11,8 @@ import {
 } from './lib/ocr.js'
 import PageCanvas from './components/PageCanvas'
 import Inspector from './components/Inspector'
+
+const EMPTY = []
 
 export default function App() {
   const [fileName, setFileName] = useState('')
@@ -47,6 +49,17 @@ export default function App() {
     for (const list of images) for (const image of list) map.set(image.id, image)
     return map
   }, [images])
+
+  // where each page has to open up to hold text that has gained a line, so
+  // the page on screen matches the file that will come out of it
+  const growthsByPage = useMemo(() => {
+    const map = new Map()
+    for (const p of pages) {
+      const { growths } = planGrowths(p, edits)
+      map.set(p.index, growths)
+    }
+    return map
+  }, [pages, edits])
 
   const selectedRun = selectedId ? runById.get(selectedId) || null : null
   const selectedImage = selectedImageId ? imageById.get(selectedImageId) || null : null
@@ -410,6 +423,7 @@ export default function App() {
                   pageData={p}
                   zoom={zoom}
                   edits={edits}
+                  growths={growthsByPage.get(p.index) || EMPTY}
                   selectedId={selectedId}
                   plate={plateRef.current}
                   plateReady={plateReady}
