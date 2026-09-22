@@ -175,6 +175,289 @@ function binarise(source) {
   return canvas
 }
 
+/**
+ * What the picture was set in.
+ *
+ * Recognition says what the words are, never what they looked like, so a line
+ * read off a picture used to come back as sans-serif regular whatever it was:
+ * change one word and the whole line was re-set in the wrong face at a size
+ * guessed from how tall its letters happened to be. A line of lower-case with
+ * no ascenders came out a third too small.
+ *
+ * The pixels are still there to be asked. Each candidate is drawn at the size
+ * that fills the line's own box and compared with the ink that is really
+ * there, and the one that covers it best is the face to set the line in -
+ * which settles its weight and its slant at the same time. Only the three
+ * families every PDF reader has are offered, so what is drawn on screen and
+ * what is written into the file are the same widths.
+ */
+const FACES = [
+  { css: '"Times New Roman", Times, serif', kind: 'serif', label: 'Times New Roman' },
+  { css: 'Arial, Helvetica, sans-serif', kind: 'sans', label: 'Arial' },
+  { css: '"Courier New", Courier, monospace', kind: 'mono', label: 'Courier New' },
+]
+const STYLES = [
+  { bold: false, italic: false },
+  { bold: true, italic: false },
+  { bold: false, italic: true },
+  { bold: true, italic: true },
+]
+
+// the built-in faces write Latin and little else, so a line in another script
+// is left to the font its own script picks rather than measured against them
+const NON_LATIN = /[^\p{Script=Latin}\p{N}\p{P}\p{Z}\p{S}\p{Cc}]/u
+
+/**
+ * How much ink there is at each pixel of a rectangle of the picture, 0 to 1.
+ *
+ * Grey, not black and white: the edge of a letter is half covered, and how
+ * much of it is covered is what tells a bold face from a regular one. How far
+ * a pixel is from the paper, rather than how dark it is, so that syntax
+ * colouring on a dark background reads as writing and not as half of it.
+ */
+function inkField(canvas, box) {
+  let data
+  try {
+    data = canvas.getContext('2d', { willReadFrequently: true })
+      .getImageData(box.x, box.y, box.w, box.h).data
+  } catch {
+    return null
+  }
+  const count = box.w * box.h
+
+  // the paper is the colour most of the rectangle is
+  const bins = new Uint32Array(4096)
+  const binOf = (i) => ((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4)
+  for (let i = 0; i < data.length; i += 4) bins[binOf(i)] += 1
+  let paper = 0
+  for (let k = 1; k < bins.length; k += 1) if (bins[k] > bins[paper]) paper = k
+  let pr = 0
+  let pg = 0
+  let pb = 0
+  let seen = 0
+  for (let i = 0; i < data.length; i += 4) {
+    if (binOf(i) !== paper) continue
+    pr += data[i]
+    pg += data[i + 1]
+    pb += data[i + 2]
+    seen += 1
+  }
+  pr /= seen
+  pg /= seen
+  pb /= seen
+
+  const away = new Float32Array(count)
+  const spread = new Uint32Array(256)
+  for (let i = 0, p = 0; p < count; i += 4, p += 1) {
+    const d = Math.max(
+      Math.abs(data[i] - pr), Math.abs(data[i + 1] - pg), Math.abs(data[i + 2] - pb),
+    )
+    away[p] = d
+    spread[Math.min(255, Math.round(d))] += 1
+  }
+
+  // what solid ink looks like here: the very darkest pixels, since anything
+  // lower is the edge of a letter rather than the middle of one, and taking
+  // an edge for solid ink makes every blurred line look bold
+  let above = 0
+  let level = 255
+  for (let v = 255; v >= 0; v -= 1) {
+    above += spread[v]
+    if (above > count * 0.005) { level = v; break }
+  }
+  if (level < 24) return null // no writing here to compare against
+
+  const field = new Float32Array(count)
+  for (let p = 0; p < count; p += 1) field[p] = Math.min(1, away[p] / level)
+  return { field, paper: [pr, pg, pb] }
+}
+
+/** The same text drawn in one candidate face, filling the same box. */
+function drawnField(ctx, text, box, baseline, face, style) {
+  const weight = style.bold ? '700' : '400'
+  const slant = style.italic ? 'italic' : 'normal'
+  ctx.font = `${slant} ${weight} 100px ${face.css}`
+  const unit = ctx.measureText(text).width
+  if (!(unit > 0)) return null
+  const size = (100 * box.w) / unit
+
+  ctx.clearRect(0, 0, box.w, box.h)
+  ctx.fillStyle = '#000000'
+  ctx.font = `${slant} ${weight} ${size}px ${face.css}`
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(text, 0, baseline)
+
+  let data
+  try {
+    data = ctx.getImageData(0, 0, box.w, box.h).data
+  } catch {
+    return null
+  }
+  const field = new Float32Array(box.w * box.h)
+  for (let i = 3, p = 0; p < field.length; i += 4, p += 1) field[p] = data[i] / 255
+  return { field, size }
+}
+
+/** Cosine similarity: ink put where there is none counts against as much. */
+function cosine(want, drawn) {
+  let dot = 0
+  let a = 0
+  let b = 0
+  for (let p = 0; p < want.length; p += 1) {
+    dot += want[p] * drawn[p]
+    a += want[p] * want[p]
+    b += drawn[p] * drawn[p]
+  }
+  return a && b ? dot / Math.sqrt(a * b) : 0
+}
+
+/** How much ink stands in each column of the box. */
+function columns(field, width) {
+  const profile = new Float32Array(width)
+  for (let p = 0; p < field.length; p += 1) profile[p % width] += field[p]
+  return profile
+}
+
+/**
+ * How alike two fields are.
+ *
+ * Half of it is pixel for pixel, which knows a serif from a sans. The other
+ * half is the columns each puts its ink in, which knows a monospace from a
+ * proportional face and, unlike the pixels, does not mind the baseline being
+ * read a little high or low - that alone used to lose whole lines of code to
+ * whichever face happened to be nearest.
+ */
+function similarity(want, drawn, width) {
+  return 0.5 * cosine(want, drawn) + 0.5 * cosine(columns(want, width), columns(drawn, width))
+}
+
+/**
+ * How much of the box the strokes themselves cover.
+ *
+ * Only what is more than half covered counts. Blurring spreads a stroke out
+ * without widening its middle, so the middle is what can be compared between
+ * a picture that has been scaled about and a letter drawn here and now - and
+ * how wide the middle of a stroke is, is what weight means.
+ */
+const strokeArea = (field) => {
+  let total = 0
+  for (let p = 0; p < field.length; p += 1) if (field[p] > 0.5) total += 1
+  return total
+}
+
+/**
+ * How well each family fits one line, and what size it would be set at.
+ *
+ * The family and the slant are judged by where the ink is - a serif, a
+ * monospace and a slanted face put it in quite different places. The weight is
+ * judged by how much of it there is: a picture has been screenshotted, scaled
+ * and softened on its way here, which moves ink about without adding any, so
+ * mass survives what shape does not. Comparing shapes alone reads every
+ * blurred line as bold.
+ */
+function measureFaces(canvas, box, baseline, text) {
+  if (box.w < 10 || box.h < 6 || NON_LATIN.test(text)) return null
+  const picture = inkField(canvas, box)
+  if (!picture) return null
+  const want = picture.field
+
+  const scratch = document.createElement('canvas')
+  scratch.width = box.w
+  scratch.height = box.h
+  const ctx = scratch.getContext('2d', { willReadFrequently: true })
+
+  const kinds = []
+  for (const face of FACES) {
+    let pick = null
+    for (const italic of [false, true]) {
+      const drawn = drawnField(ctx, text, box, baseline, face, { bold: false, italic })
+      if (!drawn) continue
+      const score = similarity(want, drawn.field, box.w)
+      // Upright is the ordinary case and a false slant is glaring, so a
+      // slanted face has to be well clear - small type softened by whatever
+      // the picture has been through swings either way by less than this.
+      const earned = italic ? score - 0.1 : score
+      if (!pick || earned > pick.earned) {
+        pick = { earned, score, italic, size: drawn.size, mass: strokeArea(drawn.field) }
+      }
+    }
+    if (!pick) continue
+    const heavy = drawnField(ctx, text, box, baseline, face, { bold: true, italic: pick.italic })
+    kinds.push({
+      face,
+      italic: pick.italic,
+      score: pick.score,
+      size: pick.size,
+      mass: pick.mass,
+      boldSize: heavy ? heavy.size : null,
+      boldMass: heavy ? strokeArea(heavy.field) : null,
+    })
+  }
+  if (!kinds.length) return null
+
+  kinds.sort((a, b) => b.score - a.score)
+  return {
+    kinds,
+    paper: picture.paper,
+    area: strokeArea(want),
+    margin: kinds.length > 1 ? kinds[0].score - kinds[1].score : 1,
+  }
+}
+
+const CLEAR = 0.12 // how far ahead a line has to be to answer for itself
+
+/**
+ * Settle on a face for every line of one picture.
+ *
+ * Small type, softened by whatever the picture has been through, often fits
+ * two families about as well as a third - and deciding line by line then sets
+ * one line of a code block in a monospace and the next in a sans, which reads
+ * far worse than being wrong the same way throughout.
+ *
+ * What a picture is made of is regions, and what marks a region out is what it
+ * is written on: a code block on its dark panel, a caption on the paper. So
+ * the lines are grouped by the colour behind them and each group is settled by
+ * the lines in it that were surest, unless a line is surer still on its own.
+ */
+function settleFaces(measured) {
+  const groups = []
+  const near = (a, b) => Math.max(
+    Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]),
+  ) < 40
+
+  for (const m of measured) {
+    if (!m.faces) continue
+    const group = groups.find((g) => near(g.paper, m.faces.paper))
+    if (group) group.members.push(m)
+    else groups.push({ paper: m.faces.paper, members: [m] })
+  }
+
+  for (const group of groups) {
+    const votes = new Map()
+    for (const m of group.members) {
+      const kind = m.faces.kinds[0].face.kind
+      votes.set(kind, (votes.get(kind) || 0) + m.faces.margin)
+    }
+    group.kind = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]
+  }
+
+  return measured.map((m) => {
+    if (!m.faces) return null
+    const group = groups.find((g) => g.members.includes(m))
+    const kind = m.faces.margin >= CLEAR ? m.faces.kinds[0].face.kind : group.kind
+
+    const chosen = m.faces.kinds.find((k) => k.face.kind === kind) || m.faces.kinds[0]
+    const bolder = chosen.boldMass !== null &&
+      Math.abs(chosen.boldMass - m.faces.area) < Math.abs(chosen.mass - m.faces.area) * 0.92
+    return {
+      face: chosen.face,
+      italic: chosen.italic,
+      bold: bolder,
+      size: bolder ? chosen.boldSize : chosen.size,
+    }
+  })
+}
+
 /** Do two recognised lines cover the same part of the picture? */
 function overlaps(a, b) {
   const w = Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0)
@@ -267,7 +550,7 @@ export async function recogniseImage({ page, pageIndex, rect, language, onProgre
  * and reading one cropped region of it.
  */
 function runsFromLines({ lines, viewport, pageIndex, toPage, idPrefix, canvas }) {
-  const runs = []
+  const measured = []
   for (const line of lines) {
     const text = (line.text || '').trimEnd()
     if (!text.trim() || line.confidence < 40) continue
@@ -289,43 +572,69 @@ function runsFromLines({ lines, viewport, pageIndex, toPage, idPrefix, canvas })
     const [, topY] = viewport.convertToPdfPoint(px0, pTop)
     const [, bottomY] = viewport.convertToPdfPoint(px1, pBottom)
 
-    // cap height is about 0.72 em for most faces, and the distance from the
-    // baseline to the top of the line is the best measure of it we have
-    const ascent = Math.abs(topY - y0)
-    const fontSize = Math.max(4, ascent / 0.72)
+    const top = Math.round(pTop)
+    measured.push({
+      line,
+      text,
+      x0,
+      y0,
+      x1,
+      topY,
+      bottomY,
+      y: y0,
+      faces: measureFaces(
+        canvas,
+        { x: Math.round(px0), y: top, w: Math.round(px1 - px0), h: Math.round(pBottom) - top },
+        pBase - top,
+        text,
+      ),
+    })
+  }
 
-    runs.push({
-      id: `${idPrefix}${runs.length}`,
+  const settled = settleFaces(measured)
+
+  const runs = measured.map((m, index) => {
+    const face = settled[index]
+    // cap height is about 0.72 em for most faces, and the distance from the
+    // baseline to the top of the line is the best measure of it we have -
+    // until the writing itself is compared with the faces it might be in,
+    // which says what size it is however few of its letters are tall
+    const fontSize = face
+      ? face.size / viewport.scale
+      : Math.max(4, Math.abs(m.topY - m.y0) / 0.72)
+
+    return {
+      id: `${idPrefix}${index}`,
       pageIndex,
       opIndex: -1,
       source: 'ocr',
-      confidence: line.confidence,
-      text,
-      x: x0,
-      y: y0,
-      width: Math.abs(x1 - x0),
+      confidence: m.line.confidence,
+      text: m.text,
+      x: m.x0,
+      y: m.y0,
+      width: Math.abs(m.x1 - m.x0),
       height: fontSize,
       // exactly what the recogniser saw as ink, which is what has to be
       // painted over: derived font metrics are only an estimate
       inkBox: {
-        x: Math.min(x0, x1),
-        y: Math.min(topY, bottomY),
-        w: Math.abs(x1 - x0),
-        h: Math.abs(topY - bottomY),
+        x: Math.min(m.x0, m.x1),
+        y: Math.min(m.topY, m.bottomY),
+        w: Math.abs(m.x1 - m.x0),
+        h: Math.abs(m.topY - m.bottomY),
       },
       fontSize,
       angle: 0,
       fontName: null,
-      fontRawName: 'Recognised text',
-      fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
-      fontKind: 'sans',
-      bold: false,
-      italic: false,
+      fontRawName: face ? `Recognised - ${face.face.label}` : 'Recognised text',
+      fontFamily: face ? face.face.css : '"Helvetica Neue", Helvetica, Arial, sans-serif',
+      fontKind: face ? face.face.kind : 'sans',
+      bold: !!face?.bold,
+      italic: !!face?.italic,
       scrambled: false,
       color: '#000000',
       bg: '#ffffff',
-    })
-  }
+    }
+  })
 
   sampleColors(null, runs, canvas, viewport, 1)
   return runs

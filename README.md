@@ -100,6 +100,27 @@ makes layout analysis skip whole lines, so the picture is read twice - once
 as it is and once flattened to plain black on white - and any line only the
 flattened pass saw is then read again on its own from the original.
 
+Recognition says what the words are, never what they looked like, so a line
+read off a picture used to come back as sans-serif regular whatever it was,
+at a size guessed from how tall its letters happened to be - a line of
+lower-case with no ascenders came out a third too small, and changing one
+word re-set the whole line in the wrong face at the wrong size. The pixels
+are still there to be asked. Each of the three families every PDF reader has
+is drawn at the size that fills the line's own box and compared with the ink
+that is really there; the one that covers it best is the face the line is set
+in, and the size that made it fit is the size it is set at. Weight is settled
+separately, by how much ink there is rather than where it is: a picture has
+been screenshotted, scaled and softened on its way here, and that moves ink
+about without adding any, so the middle of a stroke survives what its edges
+do not.
+
+Small type, softened that way, often fits two families about as well as a
+third. Deciding line by line then sets one line of a code block in a monospace
+and the next in a sans, which reads far worse than being wrong the same way
+throughout - so the lines are grouped by the colour behind them, which is what
+marks out a region of a picture, and each group is settled by the lines in it
+that were surest.
+
 The same button appears on a line of real text the PDF describes badly.
 Bengali files whose producer wrote the character map in painting order come
 out as mojibake with their conjuncts missing, and no amount of care with the
