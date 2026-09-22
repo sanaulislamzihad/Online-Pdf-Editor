@@ -23,6 +23,7 @@
   <img alt="pdf-lib" src="https://img.shields.io/badge/pdf--lib-1.17-0f766e">
   <img alt="Tesseract.js" src="https://img.shields.io/badge/Tesseract.js-7-4b5563">
   <img alt="No backend" src="https://img.shields.io/badge/Backend-none-16a34a">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/License-MIT-blue"></a>
 </p>
 
 <p align="center">
@@ -179,9 +180,12 @@ the editor and of the exported file land in `outDir`.
   over the paper rather than peeling text away — invisible on a clean scan,
   a faint patch on a textured one.
 
-## Credits
+## Licence
 
-The fonts in `public/fonts/` — Noto Sans Bengali, Carlito and Caladea — are
-under the SIL Open Font License; each licence sits alongside them.
+The code is [MIT](LICENSE) — use it, change it, ship it.
+
+The fonts in `public/fonts/` are not mine to license: Noto Sans Bengali,
+Carlito and Caladea are under the SIL Open Font License, and each licence sits
+alongside them.
 
 Built by [Sanaul Islam Zihad](https://github.com/sanaulislamzihad).
